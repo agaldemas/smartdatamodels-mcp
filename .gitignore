@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.pyc
+*.log
+*.pid
+.env
+
+# Virtual environments
+.venv/
+venv/
+
+# Dependency lock files
+uv.lock
+
+# Test cache
+.pytest_cache/
+
+# IDE-specific files (if any, common ones)
+.vscode/
+.idea/
+
+# Operating System files
+.DS_Store
