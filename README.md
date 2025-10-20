@@ -62,7 +62,7 @@ pip install smart-data-models-mcp
 
 To configure the smart-data-models-mcp server for use with Cline, add the following to your Cline MCP settings file:
 
-**Location:** `/Users/alaingaldemas/Library/Application Support/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json`
+**Location:** `~/Library/Application Support/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json`
 
 ```json
 {
@@ -70,7 +70,7 @@ To configure the smart-data-models-mcp server for use with Cline, add the follow
     "smart-data-models": {
       "command": "python",
       "args": ["-m", "smart_data_models_mcp.server"],
-      "cwd": "/Users/alaingaldemas/Documents/mcp/smart-data-models-mcp",
+      "cwd": "<path>/smartdatamodels-mcp",
       "env": {},
       "disabled": false,
       "autoApprove": []
@@ -92,7 +92,7 @@ If you prefer to use the server with Claude Desktop, add the following to your C
     "smart-data-models": {
       "command": "python",
       "args": ["-m", "smart_data_models_mcp.server"],
-      "cwd": "/Users/alaingaldemas/Documents/mcp/smart-data-models-mcp",
+      "cwd": "<path>//smartdatamodels-mcp",
       "env": {}
     }
   }
@@ -103,7 +103,7 @@ If you prefer to use the server with Claude Desktop, add the following to your C
 
 1. **Navigate to the smart-data-models-mcp directory:**
    ```bash
-   cd /Users/alaingaldemas/Documents/mcp/smart-data-models-mcp
+   cd <path>/p/smart-data-models-mcp
    ```
 
 2. **Install in development mode:**
@@ -112,7 +112,7 @@ If you prefer to use the server with Claude Desktop, add the following to your C
    ```
 
 3. **Configure MCP Server:**
-   - Open the Cline MCP settings file: `/Users/alaingaldemas/Library/Application Support/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json`
+   - Open the Cline MCP settings file: `~/Library/Application Support/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json`
    - Add the smart-data-models server configuration
    - Restart Cline to load the new server
 
