@@ -68,12 +68,21 @@ To configure the smart-data-models-mcp server for use with Cline, add the follow
 {
   "mcpServers": {
     "smart-data-models": {
-      "command": "python",
-      "args": ["-m", "smart_data_models_mcp.server"],
-      "cwd": "<path>/smartdatamodels-mcp",
-      "env": {},
+      "autoApprove": [
+        "list_domains",
+        "list_models_in_domain",
+        "get_model_details"
+      ],
       "disabled": false,
-      "autoApprove": []
+      "timeout": 60,
+      "type": "stdio",
+      "command": "uv",
+      "args": [
+        "run",
+        "--directory",
+        "<path>/smartdatamodels-mcp",
+        "src/smart_data_models_mcp/server.py"
+      ]
     }
   }
 }
@@ -98,6 +107,7 @@ If you prefer to use the server with Claude Desktop, add the following to your C
   }
 }
 ```
+**Note: this configuration remains to verify**
 
 ### Installation Steps
 
