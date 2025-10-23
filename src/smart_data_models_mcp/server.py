@@ -48,26 +48,26 @@ schema_validator = model_validator.SchemaValidator()
 class SearchModelsParams(BaseModel):
     """Parameters for searching data models."""
     query: str = Field(..., description="Search query (model name, attributes, or keywords)")
-    domain: Optional[str] = Field(None, description="Limit search to specific domain")
+    subject: Optional[str] = Field(None, description="Limit search to specific subject or domain")
     limit: int = Field(20, description="Maximum number of results to return")
     include_attributes: bool = Field(False, description="Include attribute details in results")
 
 
-class DomainModelsParams(BaseModel):
-    """Parameters for listing models in a domain."""
-    domain: str = Field(..., description="Domain name (e.g., 'SmartCities', 'Energy')")
+class SubjectModelsParams(BaseModel):
+    """Parameters for listing models in a subject."""
+    subject: Optional[str] = Field(None, description="Subject or domain name (e.g., 'SmartCities', 'Energy')")
     limit: int = Field(50, description="Maximum number of models to return")
 
 
 class ModelDetailsParams(BaseModel):
     """Parameters for getting model details."""
-    domain: str = Field(..., description="Domain name")
+    subject: Optional[str] = Field(None, description="Subject or domain name")
     model: str = Field(..., description="Model name")
 
 
 class ValidateDataParams(BaseModel):
     """Parameters for validating data against a model."""
-    domain: str = Field(..., description="Domain name")
+    subject: Optional[str] = Field(None, description="Subject or domain name")
     model: str = Field(..., description="Model name")
     data: Union[str, Dict[str, Any]] = Field(..., description="Data to validate (JSON string or dict)")
 
@@ -88,11 +88,15 @@ class SuggestModelsParams(BaseModel):
 
 # Tool definitions
 @app.tool()
-async def search_data_models(params: SearchModelsParams) -> str:
-    """Search for data models across domains by name, attributes, or keywords.
+async def search_data_models(params: SearchModelsParams = Field(..., description=SearchModelsParams.__doc__)) -> str:
+    """Search for data models across subjects by name, attributes, or keywords.
 
     Args:
-        params: Search parameters including query, domain filter, and options
+        params: An object containing the search parameters.
+            - `query` (str): The search query (model name, attributes, or keywords).
+            - `subject` (Optional[str]): Limits the search to a specific subject or domain.
+            - `limit` (int): The maximum number of results to return (default: 20).
+            - `include_attributes` (bool): Whether to include attribute details in the results (default: False).
 
     Returns:
         JSON string with search results
@@ -100,7 +104,7 @@ async def search_data_models(params: SearchModelsParams) -> str:
     try:
         results = await data_api.search_models(
             query=params.query,
-            domain=params.domain,
+            subject=params.subject,
             limit=params.limit,
             include_attributes=params.include_attributes,
         )
@@ -121,23 +125,23 @@ async def search_data_models(params: SearchModelsParams) -> str:
 
 
 @app.tool()
-async def list_domains() -> str:
-    """List all available Smart Data Model domains.
+async def list_subjects() -> str:
+    """List all available Smart Data Model subjects.
 
     Returns:
-        JSON string with available domains
+        JSON string with available subjects
     """
     try:
-        domains = await data_api.list_domains()
+        subjects = await data_api.list_subjects()
 
         return json.dumps({
             "success": True,
-            "domains": domains,
-            "count": len(domains)
+            "subjects": subjects,
+            "count": len(subjects)
         }, indent=2)
 
     except Exception as e:
-        logger.error(f"List domains failed: {e}")
+        logger.error(f"List subjects failed: {e}")
         return json.dumps({
             "success": False,
             "error": str(e)
@@ -145,56 +149,62 @@ async def list_domains() -> str:
 
 
 @app.tool()
-async def list_models_in_domain(params: DomainModelsParams) -> str:
-    """List all data models within a specific domain.
+async def list_models_in_subject(params: SubjectModelsParams = Field(..., description=SubjectModelsParams.__doc__)) -> str:
+    """List all data models within a specific subject.
 
     Args:
-        params: Domain and limit parameters
+        params: An object containing the subject and limit parameters.
+            - `subject` (str): The name of the subject or domain (e.g., 'SmartCities', 'Energy').
+            - `limit` (int): The maximum number of models to return (default: 50).
 
     Returns:
-        JSON string with models in the domain
+        JSON string with models in the subject
     """
     try:
-        models = await data_api.list_models_in_domain(
-            domain=params.domain,
+        subject_param = f"dataModel.{params.subject}" if params.subject else None
+        models = await data_api.list_models_in_subject(
+            subject=subject_param,
             limit=params.limit
         )
 
         return json.dumps({
             "success": True,
-            "domain": params.domain,
+            "subject": params.subject,
             "models": models,
             "count": len(models)
         }, indent=2)
 
     except Exception as e:
-        logger.error(f"List models in domain failed: {e}")
+        logger.error(f"List models in subject failed: {e}")
         return json.dumps({
             "success": False,
             "error": str(e),
-            "domain": params.domain
+            "subject": params.subject
         }, indent=2)
 
 
 @app.tool()
-async def get_model_details(params: ModelDetailsParams) -> str:
+async def get_model_details(params: ModelDetailsParams = Field(..., description=ModelDetailsParams.__doc__)) -> str:
     """Get detailed information about a specific data model.
 
     Args:
-        params: Domain and model identifiers
+        params: An object containing the subject and model identifiers.
+            - `subject` (str): The name of the subject or domain.
+            - `model` (str): The name of the model.
 
     Returns:
         JSON string with model details including schema, examples, and metadata
     """
     try:
+        subject_param = f"dataModel.{params.subject}" if params.subject else None
         details = await data_api.get_model_details(
-            domain=params.domain,
+            subject=subject_param,
             model=params.model
         )
 
         return json.dumps({
             "success": True,
-            "domain": params.domain,
+            "subject": params.subject,
             "model": params.model,
             "details": details
         }, indent=2)
@@ -204,17 +214,20 @@ async def get_model_details(params: ModelDetailsParams) -> str:
         return json.dumps({
             "success": False,
             "error": str(e),
-            "domain": params.domain,
+            "subject": params.subject,
             "model": params.model
         }, indent=2)
 
 
 @app.tool()
-async def validate_against_model(params: ValidateDataParams) -> str:
+async def validate_against_model(params: ValidateDataParams = Field(..., description=ValidateDataParams.__doc__)) -> str:
     """Validate data against a Smart Data Model schema.
 
     Args:
-        params: Validation parameters including domain, model, and data
+        params: An object containing the validation parameters.
+            - `subject` (str): The name of the subject or domain.
+            - `model` (str): The name of the model.
+            - `data` (Union[str, Dict[str, Any]]): The data to validate (can be a JSON string or a dictionary).
 
     Returns:
         JSON string with validation results
@@ -225,15 +238,16 @@ async def validate_against_model(params: ValidateDataParams) -> str:
         if isinstance(data, str):
             data = json.loads(data)
 
+        subject_param = f"dataModel.{params.subject}" if params.subject else None
         is_valid, errors = await schema_validator.validate_data(
-            domain=params.domain,
+            subject=subject_param,
             model=params.model,
             data=data
         )
 
         return json.dumps({
             "success": True,
-            "domain": params.domain,
+            "subject": params.subject,
             "model": params.model,
             "is_valid": is_valid,
             "errors": errors,
@@ -251,17 +265,21 @@ async def validate_against_model(params: ValidateDataParams) -> str:
         return json.dumps({
             "success": False,
             "error": str(e),
-            "domain": params.domain,
+            "subject": params.subject,
             "model": params.model
         }, indent=2)
 
 
 @app.tool()
-async def generate_ngsi_ld_from_json(params: GenerateNGSILDParams) -> str:
+async def generate_ngsi_ld_from_json(params: GenerateNGSILDParams = Field(..., description=GenerateNGSILDParams.__doc__)) -> str:
     """Generate NGSI-LD compliant entities from arbitrary JSON data.
 
     Args:
-        params: Generation parameters including data and optional entity metadata
+        params: An object containing the generation parameters.
+            - `data` (Union[str, Dict[str, Any]]): The input data (can be a JSON string or a dictionary).
+            - `entity_type` (Optional[str]): The NGSI-LD entity type.
+            - `entity_id` (Optional[str]): The NGSI-LD entity ID.
+            - `context` (Optional[str]): The Context URL for the NGSI-LD entity.
 
     Returns:
         JSON string with generated NGSI-LD entity
@@ -300,11 +318,13 @@ async def generate_ngsi_ld_from_json(params: GenerateNGSILDParams) -> str:
 
 
 @app.tool()
-async def suggest_matching_models(params: SuggestModelsParams) -> str:
+async def suggest_matching_models(params: SuggestModelsParams = Field(..., description=SuggestModelsParams.__doc__)) -> str:
     """Suggest Smart Data Models that match provided data structure.
 
     Args:
-        params: Parameters including data and number of suggestions
+        params: An object containing the suggestion parameters.
+            - `data` (Union[str, Dict[str, Any]]): The data to analyze (can be a JSON string or a dictionary).
+            - `top_k` (int): The number of top matching models to return (default: 5).
 
     Returns:
         JSON string with suggested models and similarity scores
@@ -341,59 +361,62 @@ async def suggest_matching_models(params: SuggestModelsParams) -> str:
 
 
 # Resource handlers
-@app.resource("sdm://{domain}/{model}/schema.json")
-async def get_model_schema(domain: str, model: str) -> str:
+@app.resource("sdm://{subject}/{model}/schema.json")
+async def get_model_schema(subject: str, model: str) -> str:
     """Get the JSON schema for a specific Smart Data Model.
 
     Args:
-        domain: Domain name
+        subject: Subject or domain name
         model: Model name
 
     Returns:
         JSON schema as string
     """
     try:
-        schema = await data_api.get_model_schema(domain=domain, model=model)
+        subject_param = f"dataModel.{subject}" if subject else None
+        schema = await data_api.get_model_schema(subject=subject_param, model=model)
         return json.dumps(schema, indent=2)
     except Exception as e:
-        logger.error(f"Failed to get schema for {domain}/{model}: {e}")
+        logger.error(f"Failed to get schema for {subject}/{model}: {e}")
         raise ValueError(f"Schema not found: {e}")
 
 
-@app.resource("sdm://{domain}/{model}/examples.json")
-async def get_model_examples(domain: str, model: str) -> str:
+@app.resource("sdm://{subject}/{model}/examples.json")
+async def get_model_examples(subject: str, model: str) -> str:
     """Get example instances for a specific Smart Data Model.
 
     Args:
-        domain: Domain name
+        subject: Subject or domain name
         model: Model name
 
     Returns:
         Examples as JSON string
     """
     try:
-        examples = await data_api.get_model_examples(domain=domain, model=model)
+        subject_param = f"dataModel.{subject}" if subject else None
+        examples = await data_api.get_model_examples(subject=subject_param, model=model)
         return json.dumps(examples, indent=2)
     except Exception as e:
-        logger.error(f"Failed to get examples for {domain}/{model}: {e}")
+        logger.error(f"Failed to get examples for {subject}/{model}: {e}")
         raise ValueError(f"Examples not found: {e}")
 
 
-@app.resource("sdm://{domain}/context.jsonld")
-async def get_domain_context(domain: str) -> str:
-    """Get the JSON-LD context for a domain.
+@app.resource("sdm://{subject}/context.jsonld")
+async def get_subject_context(subject: str) -> str:
+    """Get the JSON-LD context for a subject.
 
     Args:
-        domain: Domain name
+        subject: Subject or domain name
 
     Returns:
         JSON-LD context as string
     """
     try:
-        context = await data_api.get_domain_context(domain=domain)
+        subject_param = f"dataModel.{subject}" if subject else None
+        context = await data_api.get_subject_context(subject=subject_param)
         return json.dumps(context, indent=2)
     except Exception as e:
-        logger.error(f"Failed to get context for {domain}: {e}")
+        logger.error(f"Failed to get context for {subject}: {e}")
         raise ValueError(f"Context not found: {e}")
 
 
