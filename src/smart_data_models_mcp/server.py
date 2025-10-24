@@ -17,9 +17,9 @@ from urllib.parse import urlparse
 # Add the src directory to the path so we can import modules
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
 
-import data_access
-import model_generator
-import model_validator
+from . import data_access
+from . import model_generator
+from . import model_validator
 
 from fastmcp import FastMCP
 from pydantic import BaseModel, Field
@@ -93,7 +93,7 @@ async def search_data_models(params: SearchModelsParams = Field(..., description
 
     Args:
         params: An object containing the search parameters.
-            - `query` (str): The search query (model name, attributes, or keywords).
+            - `query` (Optional[str]): The search query (model name, attributes, or keywords).
             - `subject` (Optional[str]): Limits the search to a specific subject or domain.
             - `limit` (int): The maximum number of results to return (default: 20).
             - `include_attributes` (bool): Whether to include attribute details in the results (default: False).
@@ -161,7 +161,7 @@ async def list_models_in_subject(params: SubjectModelsParams = Field(..., descri
         JSON string with models in the subject
     """
     try:
-        subject_param = f"dataModel.{params.subject}" if params.subject else None
+        subject_param = params.subject if params.subject else None
         models = await data_api.list_models_in_subject(
             subject=subject_param,
             limit=params.limit
@@ -196,7 +196,7 @@ async def get_model_details(params: ModelDetailsParams = Field(..., description=
         JSON string with model details including schema, examples, and metadata
     """
     try:
-        subject_param = f"dataModel.{params.subject}" if params.subject else None
+        subject_param = params.subject if params.subject else None
         details = await data_api.get_model_details(
             subject=subject_param,
             model=params.model
@@ -238,7 +238,7 @@ async def validate_against_model(params: ValidateDataParams = Field(..., descrip
         if isinstance(data, str):
             data = json.loads(data)
 
-        subject_param = f"dataModel.{params.subject}" if params.subject else None
+        subject_param = params.subject if params.subject else None
         is_valid, errors = await schema_validator.validate_data(
             subject=subject_param,
             model=params.model,
@@ -373,7 +373,7 @@ async def get_model_schema(subject: str, model: str) -> str:
         JSON schema as string
     """
     try:
-        subject_param = f"dataModel.{subject}" if subject else None
+        subject_param = subject if subject else None
         schema = await data_api.get_model_schema(subject=subject_param, model=model)
         return json.dumps(schema, indent=2)
     except Exception as e:
@@ -393,7 +393,7 @@ async def get_model_examples(subject: str, model: str) -> str:
         Examples as JSON string
     """
     try:
-        subject_param = f"dataModel.{subject}" if subject else None
+        subject_param = subject if subject else None
         examples = await data_api.get_model_examples(subject=subject_param, model=model)
         return json.dumps(examples, indent=2)
     except Exception as e:
@@ -412,7 +412,7 @@ async def get_subject_context(subject: str) -> str:
         JSON-LD context as string
     """
     try:
-        subject_param = f"dataModel.{subject}" if subject else None
+        subject_param = subject if subject else None
         context = await data_api.get_subject_context(subject=subject_param)
         return json.dumps(context, indent=2)
     except Exception as e:

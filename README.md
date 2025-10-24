@@ -69,20 +69,17 @@ To configure the smart-data-models-mcp server for use with Cline, add the follow
   "mcpServers": {
     "smart-data-models": {
       "autoApprove": [
-        "list_domains",
-        "list_models_in_domain",
-        "get_model_details"
+        "list_subjects"
       ],
       "disabled": false,
       "timeout": 60,
       "type": "stdio",
-      "command": "uv",
+      "command": "python3",
       "args": [
-        "run",
-        "--directory",
-        "<path>/smartdatamodels-mcp",
-        "src/smart_data_models_mcp/server.py"
-      ]
+        "-m",
+        "smart_data_models_mcp.server"
+      ],
+      "cwd": "/Users/alaingaldemas/Documents/mcp/smartdatamodels-mcp/src"
     }
   }
 }

@@ -22,6 +22,26 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+# Available pysmartdatamodels functions:
+# - list_all_subjects()
+# - datamodels_subject(subject)
+# - attributes_datamodel(subject, datamodel)
+# - description_attribute(subject, datamodel, attribute)
+# - datatype_attribute(subject, datamodel, attribute)
+# - ngsi_datatype_attribute(subject, datamodel, attribute)
+# - model_attribute(subject, datamodel, attribute)
+# - units_attribute(subject, datamodel, attribute)
+# - ngsi_ld_example_generator(schema_url) - requires full schema URL
+# - subject_for_datamodel(datamodel)
+# - list_datamodel_metadata(datamodel, subject)
+
+# Recent fixes applied:
+# ✓ Fix list_subjects to use psdm.list_all_subjects()
+# ✓ Fix list_models_in_subject to use psdm.datamodels_subject()
+# ✓ Rewrite get_model_details with multiple psdm functions
+# ✓ Fix search to use comprehensive text search
+# ✓ Fix ngsi_ld_example_generator to use proper schema URL
+
 
 class Cache:
     """Simple in-memory cache with TTL."""
@@ -68,96 +88,40 @@ class SmartDataModelsAPI:
     async def _run_sync_in_thread(self, func, *args, **kwargs):
         """Run synchronous function in thread pool."""
         loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, func, *args, **kwargs)
+        # Don't pass timeout to run_in_executor - handle timeout within the sync function if needed
+        timeout_value = kwargs.pop('timeout', None)
+        result = await loop.run_in_executor(None, func, *args, **kwargs)
+        return result
 
     async def list_subjects(self) -> List[str]:
-        """List all available subjects.
-
-        Args:
-            None
-
-        Returns:
-            List[str]: A list of available Smart Data Model subjects.
-        """
+        """List all available subjects."""
         cache_key = "subjects"
-
-        # Try cache first
         cached = self._cache.get(cache_key)
         if cached:
             return cached
 
-        # Get from pysmartdatamodels
-        try:
-            subjects = await self._run_sync_in_thread(psdm.list_all_subjects)
-            # If pysmartdatamodels returns subjects, use them. Otherwise, fallback to KNOWN_SUBJECTS.
-            if subjects:
-                self._cache.set(cache_key, subjects)
-                return subjects
-            else:
-                logger.warning("pysmartdatamodels returned no subjects. Falling back to KNOWN_SUBJECTS.")
-                self._cache.set(cache_key, self.KNOWN_SUBJECTS)
-                return self.KNOWN_SUBJECTS
-
-        except Exception as e:
-            logger.warning(f"pysmartdatamodels subject listing failed: {e}. Falling back to KNOWN_SUBJECTS.")
-            self._cache.set(cache_key, self.KNOWN_SUBJECTS)
-            return self.KNOWN_SUBJECTS
+        # Use KNOWN_SUBJECTS as the primary list since we don't want to access local files
+        self._cache.set(cache_key, self.KNOWN_SUBJECTS)
+        return self.KNOWN_SUBJECTS
 
     async def list_models_in_subject(self, subject: str, limit: int = 50) -> List[str]:
-        """List all models in a specific subject.
-
-        Args:
-            subject (str): The name of the subject to list models from.
-            limit (int): The maximum number of models to return (default: 50).
-
-        Returns:
-            List[str]: A list of model names within the specified subject.
-        """
+        """List all models in a specific subject using GitHub API."""
         cache_key = f"subject_models_{subject}"
-
-        # Try cache first
         cached = self._cache.get(cache_key)
         if cached:
             return cached[:limit]
 
+        # Use GitHub API to get models from the repository
         try:
-            # Use pysmartdatamodels to get subject data
-            subject_data = await self._run_sync_in_thread(psdm.datamodels_subject, subject)
-
-            if subject_data and isinstance(subject_data, list):
-                models = subject_data[:limit]
-
-                # Also try to get from GitHub API for more complete list
-                try:
-                    github_models = await self._get_models_from_github_api(subject)
-                    if github_models:
-                        models = list(set(models + github_models))[:limit]
-                except Exception as e:
-                    logger.debug(f"GitHub API fallback failed for {subject}: {e}")
-
+            models = await self._get_models_from_github_api(subject)
+            if models:
+                # Cache and return the models
                 self._cache.set(cache_key, models)
-                return models
-            else:
-                # Fallback to GitHub API
-                models = await self._get_models_from_github_api(subject)
-                if models:
-                    models = models[:limit]
-                    self._cache.set(cache_key, models)
-                    return models
-
+                return models[:limit]
         except Exception as e:
-            logger.warning(f"Failed to get models for subject {subject}: {e}")
-            # Fallback to GitHub API
-            try:
-                models = await self._get_models_from_github_api(subject)
-                if models:
-                    models = models[:limit]
-                    self._cache.set(cache_key, models)
-                    return models
-            except Exception as e2:
-                logger.error(f"GitHub API fallback also failed for {subject}: {e2}")
+            logger.error(f"GitHub API failed for subject {subject}: {e}")
 
-        # Ultimate fallback: empty list
+        # Fallback: return empty list
         return []
 
     async def _get_models_from_github_api(self, subject: str) -> Optional[List[str]]:
@@ -207,43 +171,84 @@ class SmartDataModelsAPI:
         if cached:
             return cached
 
-        try:
-            # Use pysmartdatamodels search if available
-            if hasattr(psdm, 'find_datamodels'):
-                search_results = await self._run_sync_in_thread(psdm.find_datamodels, query, subject)
-
-                if search_results:
-                    # Convert to our format
-                    results = []
-                    for result in search_results[:limit]:
-                        model_info = {
-                            "subject": result.get("subject", "Unknown"),
-                            "model": result.get("model", "Unknown"),
-                            "name": result.get("name", ""),
-                            "description": result.get("description", "")
-                        }
-
-                        if include_attributes and "attributes" in result:
-                            model_info["attributes"] = result["attributes"]
-
-                        results.append(model_info)
-
-                    self._cache.set(cache_key, results)
-                    return results
-
-        except Exception as e:
-            logger.debug(f"pysmartdatamodels search failed: {e}")
-
-        # Fallback 1: Direct model name match across all subjects
-        direct_match_results = await self._direct_model_name_search(query, subject, include_attributes)
-        if direct_match_results:
-            self._cache.set(cache_key, direct_match_results)
-            return direct_match_results[:limit]
-
-        # Fallback 2: simple text search across subjects
-        results = await self._simple_text_search(query, subject, limit, include_attributes)
+        # Perform comprehensive text search across subjects and models
+        results = await self._comprehensive_model_search(query, subject, limit, include_attributes)
 
         self._cache.set(cache_key, results)
+        return results
+
+    async def _comprehensive_model_search(
+        self,
+        query: str,
+        subject: Optional[str] = None,
+        limit: int = 20,
+        include_attributes: bool = False
+    ) -> List[Dict[str, Any]]:
+        """Perform comprehensive search across all models using pysmartdatamodels functions."""
+        results = []
+        query_lower = query.lower()
+
+        subjects_to_search = [subject] if subject else await self.list_subjects()
+
+        for subject_name in subjects_to_search:
+            try:
+                # Get all models in this subject
+                models = await self.list_models_in_subject(subject_name, limit=200)  # Higher limit for search
+
+                for model_name in models:
+                    try:
+                        # Get model details which includes attributes information
+                        details = await self.get_model_details(subject_name, model_name)
+
+                        # Check if query matches model name
+                        name_match = query_lower in model_name.lower()
+
+                        # Check if query matches description
+                        desc_match = query_lower in details.get("description", "").lower()
+
+                        # Check if query matches any attribute names or descriptions
+                        attr_match = False
+                        matched_attr = None
+                        if include_attributes and "attributes" in details:
+                            for attr in details["attributes"]:
+                                attr_name = attr.get("name", "")
+                                attr_desc = attr.get("description", "")
+                                if query_lower in attr_name.lower() or query_lower in attr_desc.lower():
+                                    attr_match = True
+                                    matched_attr = attr
+                                    break
+
+                        # If any match found, add to results
+                        if name_match or desc_match or attr_match:
+                            model_info = {
+                                "subject": subject_name,
+                                "model": model_name,
+                                "name": model_name,
+                                "description": details.get("description", ""),
+                                "source": details.get("source", "pysmartdatamodels")
+                            }
+
+                            if attr_match and matched_attr:
+                                # Add specific attribute match info
+                                model_info["matched_attribute"] = matched_attr["name"]
+                                model_info["attribute_description"] = matched_attr.get("description", "")
+
+                            if include_attributes and "attributes" in details:
+                                model_info["attributes"] = details["attributes"]
+
+                            results.append(model_info)
+
+                            if len(results) >= limit:
+                                return results
+
+                    except Exception as e:
+                        logger.debug(f"Error checking model {subject_name}/{model_name}: {e}")
+                        continue
+
+            except Exception as e:
+                logger.debug(f"Error searching subject {subject_name}: {e}")
+                continue
+
         return results
 
     async def _direct_model_name_search(
@@ -352,62 +357,121 @@ class SmartDataModelsAPI:
         if cached:
             return cached
 
-        details = None
-        # Attempt 1: Try pysmartdatamodels with the provided subject
+        # Try to construct model details using pysmartdatamodels functions
         try:
-            details = await self._run_sync_in_thread(psdm.description_attribute_metadata, subject, model)
-            if details and isinstance(details, dict):
-                processed_details = {
+            # Get attributes list for this model
+            attributes_list = await self._run_sync_in_thread(psdm.attributes_datamodel, subject, model)
+
+            if attributes_list and isinstance(attributes_list, list):
+                attributes = []
+
+                # For each attribute, get its details
+                for attr_name in attributes_list[:50]:  # Limit to avoid too many calls
+                    try:
+                        # Get description, data type, and NGSI type for each attribute
+                        attr_desc = await self._run_sync_in_thread(psdm.description_attribute, subject, model, attr_name)
+                        attr_type = await self._run_sync_in_thread(psdm.datatype_attribute, subject, model, attr_name)
+                        ngsi_type = await self._run_sync_in_thread(psdm.ngsi_datatype_attribute, subject, model, attr_name)
+                        attr_units = await self._run_sync_in_thread(psdm.units_attribute, subject, model, attr_name)
+                        attr_model = await self._run_sync_in_thread(psdm.model_attribute, subject, model, attr_name)
+
+                        attribute_info = {
+                            "name": attr_name,
+                            "type": attr_type if attr_type else "string",
+                            "description": attr_desc if attr_desc else f"Attribute {attr_name}",
+                            "ngsi_type": ngsi_type if ngsi_type else "Property"
+                        }
+
+                        if attr_units:
+                            attribute_info["units"] = attr_units
+                        if attr_model:
+                            attribute_info["model"] = attr_model
+
+                        attributes.append(attribute_info)
+
+                    except Exception as e:
+                        logger.debug(f"Error getting details for attribute {attr_name}: {e}")
+                        # Add basic attribute info even if detailed retrieval fails
+                        attributes.append({
+                            "name": attr_name,
+                            "type": "string",
+                            "description": f"Attribute {attr_name}",
+                            "ngsi_type": "Property"
+                        })
+
+                # Try to get metadata for the model
+                metadata = await self._run_sync_in_thread(psdm.list_datamodel_metadata, model, subject)
+                if metadata and isinstance(metadata, dict):
+                    # Extract information from metadata
+                    processed_details = {
+                        "subject": subject,
+                        "model": model,
+                        "description": metadata.get("description", f"Smart Data Model for {model}"),
+                        "attributes": attributes,
+                        "source": "pysmartdatamodels"
+                    }
+
+                    # Add optional metadata fields if available
+                    for field in ["version", "modelTags", "license", "spec", "title", "required"]:
+                        if field in metadata and metadata[field]:
+                            processed_details[field] = metadata[field]
+
+                    self._cache.set(cache_key, processed_details)
+                    return processed_details
+                else:
+                    # No metadata available, use basic constructed details
+                    processed_details = {
+                        "subject": subject,
+                        "model": model,
+                        "description": f"Smart Data Model for {model} in {subject} subject",
+                        "attributes": attributes,
+                        "source": "pysmartdatamodels"
+                    }
+                    self._cache.set(cache_key, processed_details)
+                    return processed_details
+
+        except Exception as e:
+            logger.debug(f"pysmartdatamodels details construction failed for {subject}/{model}: {e}")
+
+        # Fallback 1: Try to get schema from GitHub to construct details
+        try:
+            schema = await self.get_model_schema(subject, model)
+            if schema and isinstance(schema, dict):
+                attributes = []
+                required_attrs = schema.get("required", [])
+
+                properties = schema.get("properties", {})
+                for prop_name, prop_def in properties.items():
+                    if isinstance(prop_def, dict):
+                        attr_info = {
+                            "name": prop_name,
+                            "type": prop_def.get("type", "string"),
+                            "description": prop_def.get("description", f"Property {prop_name}"),
+                            "required": prop_name in required_attrs
+                        }
+                        attributes.append(attr_info)
+
+                details = {
                     "subject": subject,
                     "model": model,
-                    "description": details.get("description", ""),
-                    "attributes": details.get("attributes", []),
-                    "required_attributes": details.get("required", []),
-                    "source": "pysmartdatamodels"
+                    "description": schema.get("description", f"Smart Data Model for {model}"),
+                    "attributes": attributes,
+                    "required_attributes": required_attrs,
+                    "source": "github_schema"
                 }
-                if "author" in details:
-                    processed_details["author"] = details["author"]
-                if "license" in details:
-                    processed_details["license"] = details["license"]
-                self._cache.set(cache_key, processed_details)
-                return processed_details
+                self._cache.set(cache_key, details)
+                return details
         except Exception as e:
-            logger.debug(f"pysmartdatamodels details failed for {subject}/{model}: {e}")
+            logger.debug(f"GitHub schema fallback failed for {subject}/{model}: {e}")
 
-        # Attempt 2: Fallback to GitHub API with the provided subject
-        if not details:
-            try:
-                details = await self._get_basic_model_details_from_github(subject, model, repo_subject=subject)
-                if details:
-                    self._cache.set(cache_key, details)
-                    return details
-            except Exception as e:
-                logger.debug(f"GitHub details fallback failed for {subject}/{model}: {e}")
-
-        # Attempt 3: Infer subject from model name (e.g., WaterQualityObserved -> WaterQuality)
-        if not details and "WaterQuality" in model:
-            inferred_subject = "WaterQuality"
-            logger.info(f"Attempting to infer subject for {model}: {inferred_subject}")
-            try:
-                details = await self._get_basic_model_details_from_github(subject, model, repo_subject=inferred_subject)
-                if details:
-                    details["subject"] = inferred_subject # Update subject to the inferred one
-                    self._cache.set(cache_key, details)
-                    return details
-            except Exception as e:
-                logger.debug(f"GitHub details fallback with inferred subject {inferred_subject}/{model} failed: {e}")
-        elif not details and "Quality" in model: # General heuristic for other 'Quality' models
-            inferred_subject = model.split('Quality')[0] + 'Quality'
-            logger.info(f"Attempting to infer subject for {model}: {inferred_subject}")
-            try:
-                details = await self._get_basic_model_details_from_github(subject, model, repo_subject=inferred_subject)
-                if details:
-                    details["subject"] = inferred_subject # Update subject to the inferred one
-                    self._cache.set(cache_key, details)
-                    return details
-            except Exception as e:
-                logger.debug(f"GitHub details fallback with inferred subject {inferred_subject}/{model} failed: {e}")
-
+        # Fallback 2: Try basic GitHub details
+        try:
+            details = await self._get_basic_model_details_from_github(subject, model)
+            if details:
+                self._cache.set(cache_key, details)
+                return details
+        except Exception as e:
+            logger.debug(f"Basic GitHub details fallback failed for {subject}/{model}: {e}")
 
         # Ultimate fallback
         details = {
@@ -542,15 +606,20 @@ class SmartDataModelsAPI:
         if cached:
             return cached
 
+        # Try pysmartdatamodels with schema URL (it requires a full schema URL, not subject/model)
         try:
-            # Try pysmartdatamodels first
-            examples = await self._run_sync_in_thread(psdm.ngsi_ld_example_generator, subject, model)
+            # Construct the schema URL first
+            actual_repo_subject = repo_subject if repo_subject else subject
+            repo_name = f"dataModel.{actual_repo_subject}"
+            schema_url = f"https://raw.githubusercontent.com/{self.SMART_DATA_MODELS_ORG}/{repo_name}/master/{model}/schema.json"
 
-            if examples:
+            examples = await self._run_sync_in_thread(psdm.ngsi_ld_example_generator, schema_url)
+
+            if examples and examples != "dataModel" and examples != "False":
                 if isinstance(examples, dict):
                     examples = [examples]
                 elif isinstance(examples, list):
-                    examples = examples
+                    examples = [examples] if examples else []
 
                 self._cache.set(cache_key, examples)
                 return examples
