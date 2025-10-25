@@ -58,6 +58,54 @@ pip install smart-data-models-mcp
 
 ## Configuration
 
+### GitHub Token Configuration
+
+For optimal performance and to avoid rate limiting, you can configure a GitHub personal access token:
+
+1. **Create a GitHub Token:**
+   - Go to GitHub Settings → Developer settings → Personal access tokens → Tokens (classic)
+   - Click "Generate new token (classic)"
+   - Select minimal scopes (no scopes required for public repository access)
+   - Copy the generated token
+
+2. **Configure Environment Variable:**
+   - Create a `.env` file in your project directory
+   - Add the following line:
+
+   ```env
+   GITHUB_READ_TOKEN=ghp_your_token_here
+   ```
+
+3. **Alternative: Set System Environment Variable:**
+   ```bash
+   export GITHUB_READ_TOKEN=ghp_your_token_here
+   ```
+
+The server automatically loads the token from the `.env` file or environment variables and uses it for GitHub API requests. If no token is provided, requests will work but may be rate-limited.
+
+### Logging Configuration
+
+The server writes detailed logs to help with troubleshooting and monitoring. Log files are automatically created in the project's `logs/` directory:
+
+```
+logs/
+└── smart-data-models.log
+```
+
+**Log Configuration:**
+- Location: `logs/smart-data-models.log` (relative to project root)
+- Format: Timestamp - Logger Name - Level - Message
+- Rotation: 10MB file size with 5 backups
+- Levels: DEBUG (file), INFO (console)
+
+You can check the logs for detailed information about:
+- API requests to GitHub
+- Pysmartdatamodels operations
+- Caching behavior
+- Error conditions and troubleshooting details
+
+### MCP Server Configuration
+
 ### Cline MCP Server Configuration
 
 To configure the smart-data-models-mcp server for use with Cline, add the following to your Cline MCP settings file:
