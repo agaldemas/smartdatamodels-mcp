@@ -7,11 +7,13 @@ and pysmartdatamodels package, with caching and error handling.
 import asyncio
 import json
 import logging
+import os
 import time
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urljoin
 
 import requests
+from dotenv import load_dotenv
 from .github_repo_analyzer import EmbeddedGitHubAnalyzer
 
 try:
@@ -96,11 +98,26 @@ class SmartDataModelsAPI:
     SMART_DATA_MODELS_ORG = "smart-data-models" # Organization name
 
     def __init__(self):
+        # Load environment variables from .env file
+        load_dotenv()
+
         self._cache = Cache(ttl_seconds=1800)  # 30 minutes
         self._session = requests.Session()
-        self._session.headers.update({
+
+        # Set up base headers
+        headers = {
             "User-Agent": "smart-data-models-mcp/0.1.0"
-        })
+        }
+
+        # Add GitHub token if available
+        github_token = os.getenv("GITHUB_READ_TOKEN")
+        if github_token:
+            headers["Authorization"] = f"token {github_token}"
+            logger.info("GitHub token loaded and will be used for API requests")
+        else:
+            logger.warning("No GitHub token found in environment - API rate limits may apply")
+
+        self._session.headers.update(headers)
 
     async def _run_sync_in_thread(self, func, *args, **kwargs):
         """Run synchronous function in thread pool."""
@@ -192,7 +209,15 @@ class SmartDataModelsAPI:
             return []
 
     async def list_models_in_subject(self, subject: str) -> List[str]:
-        """List all models in a specific subject using GitHub API."""
+        """List all models in a specific subject using GitHub API.
+
+        Args:
+            subject: Subject name (may or may not include 'dataModel.' prefix)
+        """
+        # Denormalize subject name for internal use
+        if subject.startswith("dataModel."):
+            subject = subject[10:]  # Remove "dataModel." prefix
+
         cache_key = f"subject_models_{subject}"
         cached = self._cache.get(cache_key)
         if cached:
@@ -388,14 +413,32 @@ class SmartDataModelsAPI:
         limit: int = 20,
         include_attributes: bool = False
     ) -> List[Dict[str, Any]]:
-        """Perform comprehensive search across all models using pysmartdatamodels functions."""
+        """Perform comprehensive and tolerant search across all models.
+
+        This function searches for models with flexible matching:
+        - Splits query into keywords and matches any keyword
+        - Uses fuzzy matching when available (needs fuzzywuzzy package)
+        - Ranks results by relevance score
+        - Matches against model names, descriptions, and attributes
+        """
         # Normalize subject parameter
         subject = self._normalize_subject(subject)
 
         results = []
-        query_lower = query.lower()
+
+        # Prepare search keywords - split on spaces and remove empty strings
+        keywords = [k.lower().strip() for k in query.split() if k.strip()]
+        search_keywords = [query.lower()] + keywords  # Include full query and individual words
 
         subjects_to_search = [subject] if subject else await self.list_subjects()
+
+        # Import fuzzywuzzy for better matching if available
+        try:
+            from fuzzywuzzy import fuzz
+            FUZZY_AVAILABLE = True
+        except ImportError:
+            FUZZY_AVAILABLE = False
+            logger.debug("fuzzywuzzy not available, using exact matching")
 
         for subject_name in subjects_to_search:
             try:
@@ -407,46 +450,96 @@ class SmartDataModelsAPI:
                         # Get model details which includes attributes information
                         details = await self.get_model_details(subject_name, model_name)
 
-                        # Check if query matches model name
-                        name_match = query_lower in model_name.lower()
+                        # Calculate relevance score based on keyword matches
+                        relevance_score = 0
+                        matched_parts = []
+                        matched_attr_details = []
 
-                        # Check if query matches description
-                        desc_match = query_lower in details.get("description", "").lower()
+                        model_name_lower = model_name.lower()
+                        description_lower = details.get("description", "").lower()
 
-                        # Check if query matches any attribute names or descriptions
-                        attr_match = False
-                        matched_attr = None
-                        if include_attributes and "attributes" in details:
-                            for attr in details["attributes"]:
-                                attr_name = attr.get("name", "")
-                                attr_desc = attr.get("description", "")
-                                if query_lower in attr_name.lower() or query_lower in attr_desc.lower():
-                                    attr_match = True
-                                    matched_attr = attr
-                                    break
+                        # Check model name matches
+                        name_score = 0
+                        for keyword in search_keywords:
+                            if keyword in model_name_lower:
+                                name_score += 2  # Higher weight for name matches
+                            elif FUZZY_AVAILABLE and len(keyword) > 3:
+                                # Fuzzy matching for longer keywords
+                                similarity = fuzz.partial_ratio(keyword, model_name_lower)
+                                if similarity >= 80:  # High similarity threshold
+                                    name_score += 1.5
 
-                        # If any match found, add to results
-                        if name_match or desc_match or attr_match:
+                        if name_score > 0:
+                            matched_parts.append("name")
+                            relevance_score += name_score
+
+                        # Check description matches
+                        desc_score = 0
+                        for keyword in search_keywords:
+                            if keyword in description_lower:
+                                desc_score += 1
+                            elif FUZZY_AVAILABLE and len(keyword) > 3:
+                                # Fuzzy matching for longer keywords
+                                similarity = fuzz.partial_ratio(keyword, description_lower)
+                                if similarity >= 75:  # Slightly lower threshold for descriptions
+                                    desc_score += 0.8
+
+                        if desc_score > 0:
+                            matched_parts.append("description")
+                            relevance_score += desc_score
+
+                        # Check attribute matches (if requested and available)
+                        attr_score = 0
+                        if include_attributes or "attributes" in details:
+                            attributes = details.get("attributes", [])
+                            for attr in attributes:
+                                attr_name = attr.get("name", "").lower()
+                                attr_desc = attr.get("description", "").lower()
+
+                                for keyword in search_keywords:
+                                    if keyword in attr_name or keyword in attr_desc:
+                                        attr_score += 1.5  # Attribute matches are important
+                                        matched_attr_details.append({
+                                            "name": attr["name"],
+                                            "description": attr.get("description", "")
+                                        })
+                                        break
+                                    elif FUZZY_AVAILABLE and len(keyword) > 3:
+                                        # Fuzzy matching for attributes
+                                        name_similarity = fuzz.partial_ratio(keyword, attr_name)
+                                        desc_similarity = fuzz.partial_ratio(keyword, attr_desc)
+                                        if name_similarity >= 80 or desc_similarity >= 75:
+                                            attr_score += 1.2
+                                            matched_attr_details.append({
+                                                "name": attr["name"],
+                                                "description": attr.get("description", "")
+                                            })
+                                            break
+
+                        if attr_score > 0:
+                            matched_parts.append("attributes")
+                            relevance_score += attr_score
+
+                        # Only include models with some relevance
+                        if relevance_score > 0:
                             model_info = {
                                 "subject": subject_name,
                                 "model": model_name,
                                 "name": model_name,
                                 "description": details.get("description", ""),
+                                "relevance_score": round(relevance_score, 2),
+                                "matched_parts": matched_parts,
                                 "source": details.get("source", "pysmartdatamodels")
                             }
 
-                            if attr_match and matched_attr:
-                                # Add specific attribute match info
-                                model_info["matched_attribute"] = matched_attr["name"]
-                                model_info["attribute_description"] = matched_attr.get("description", "")
+                            if matched_attr_details:
+                                # Include most relevant attribute match
+                                model_info["matched_attributes"] = matched_attr_details[:3]  # Limit to top 3
 
                             if include_attributes and "attributes" in details:
                                 model_info["attributes"] = details["attributes"]
 
                             results.append(model_info)
-
-                            if len(results) >= limit:
-                                return results
 
                     except Exception as e:
                         logger.debug(f"Error checking model {subject_name}/{model_name}: {e}")
@@ -456,7 +549,9 @@ class SmartDataModelsAPI:
                 logger.debug(f"Error searching subject {subject_name}: {e}")
                 continue
 
-        return results
+        # Sort results by relevance score (highest first) and return limited results
+        results.sort(key=lambda x: x["relevance_score"], reverse=True)
+        return results[:limit] if len(results) > limit else results
 
     async def _direct_model_name_search(
         self,
