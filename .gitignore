@@ -22,3 +22,4 @@ uv.lock
 # Operating System files
 .DS_Store
 cline_task_*.md
+tests-res

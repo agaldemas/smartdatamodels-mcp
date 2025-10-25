@@ -1,7 +1,7 @@
 """Data access layer for Smart Data Models.
 
-This module provides access to FIWARE Smart Data Models through the pysmartdatamodels
-package and GitHub API, with caching and error handling.
+This module provides access to FIWARE Smart Data Models through GitHub analyzer
+and pysmartdatamodels package, with caching and error handling.
 """
 
 import asyncio
@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urljoin
 
 import requests
+from .github_repo_analyzer import EmbeddedGitHubAnalyzer
 
 try:
     import pysmartdatamodels as psdm
@@ -21,6 +22,7 @@ except ImportError:
     PYSMARTDATAMODELS_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
+
 
 # Available pysmartdatamodels functions:
 # - list_all_subjects()
@@ -68,8 +70,23 @@ class Cache:
 class SmartDataModelsAPI:
     """API wrapper for accessing Smart Data Models data."""
 
-    # Known subjects from the specification
-    KNOWN_SUBJECTS = [
+    def _normalize_subject(self, subject: Optional[str]) -> Optional[str]:
+        """Normalize subject name by prepending 'dataModel.' if not present.
+
+        Args:
+            subject: Subject name that may or may not include 'dataModel.' prefix
+
+        Returns:
+            Normalized subject name with 'dataModel.' prefix, or None if input was None
+        """
+        if subject is None:
+            return None
+        if not subject.startswith("dataModel."):
+            return f"dataModel.{subject}"
+        return subject
+
+    # Known domains from the specification
+    KNOWN_DOMAINS = [
         "SmartCities", "Agrifood", "Water", "Energy", "Logistics",
         "Robotics", "Sensoring", "Cross sector", "Health", "Destination",
         "Environment", "Aeronautics", "Manufacturing", "Incubated", "Harmonization"
@@ -93,6 +110,43 @@ class SmartDataModelsAPI:
         result = await loop.run_in_executor(None, func, *args, **kwargs)
         return result
 
+    async def list_domains(self) -> List[str]:
+        """List all available domains."""
+        cache_key = "domains"
+        cached = self._cache.get(cache_key)
+        if cached:
+            return cached
+
+        # Fetch domains from GitHub organization repositories
+        try:
+            # GitHub API endpoint for organization repositories
+            org_repos_url = f"https://api.github.com/orgs/{self.SMART_DATA_MODELS_ORG}/repos"
+            response = await self._run_sync_in_thread(
+                self._session.get, org_repos_url, timeout=30
+            )
+
+            if response.status_code == 200:
+                repos_data = response.json()
+                domains = []
+                for repo in repos_data:
+                    repo_name = repo.get("name", "")
+                    # Filter repositories that do NOT start with "dataModel."
+                    if repo_name and not repo_name.startswith("dataModel."):
+                        domains.append(repo_name)
+
+                domains.sort()  # Sort for consistent ordering
+                self._cache.set(cache_key, domains)
+                return domains
+            else:
+                logger.error(f"GitHub API returned status {response.status_code} for {org_repos_url}")
+
+        except Exception as e:
+            logger.error(f"Failed to fetch domains from GitHub API: {e}")
+
+        # Fallback to known domains if GitHub API fails
+        self._cache.set(cache_key, self.KNOWN_DOMAINS)
+        return self.KNOWN_DOMAINS
+
     async def list_subjects(self) -> List[str]:
         """List all available subjects."""
         cache_key = "subjects"
@@ -100,16 +154,49 @@ class SmartDataModelsAPI:
         if cached:
             return cached
 
-        # Use KNOWN_SUBJECTS as the primary list since we don't want to access local files
-        self._cache.set(cache_key, self.KNOWN_SUBJECTS)
-        return self.KNOWN_SUBJECTS
+        # Try pysmartdatamodels first
+        if psdm:
+            try:
+                subjects = await self._run_sync_in_thread(psdm.list_all_subjects)
+                self._cache.set(cache_key, subjects)
+                return subjects
+            except (AttributeError, Exception) as e:
+                logger.warning(f"pysmartdatamodels list_all_subjects failed: {e}")
 
-    async def list_models_in_subject(self, subject: str, limit: int = 50) -> List[str]:
+        # Fallback: Get subjects from GitHub API
+        try:
+            subjects = []
+            domains = await self.list_domains()  # Get all domains
+            for domain in domains:
+                # Skip repositories that start with dataModel (these are subject repos, not domain repos)
+                if domain.startswith("dataModel."):
+                    continue
+
+                try:
+                    domain_subjects = await self._get_subjects_from_github_api(domain)
+                    if domain_subjects:
+                        subjects.extend(domain_subjects)
+                except Exception as e:
+                    logger.debug(f"Failed to get subjects for domain {domain}: {e}")
+                    continue
+
+            # Remove duplicates and sort
+            subjects = list(set(subjects))
+            subjects.sort()
+            self._cache.set(cache_key, subjects)
+            return subjects
+
+        except Exception as e:
+            logger.error(f"GitHub API fallback also failed: {e}")
+            # Return empty list as ultimate fallback
+            return []
+
+    async def list_models_in_subject(self, subject: str) -> List[str]:
         """List all models in a specific subject using GitHub API."""
         cache_key = f"subject_models_{subject}"
         cached = self._cache.get(cache_key)
         if cached:
-            return cached[:limit]
+            return cached
 
         # Use GitHub API to get models from the repository
         try:
@@ -117,12 +204,129 @@ class SmartDataModelsAPI:
             if models:
                 # Cache and return the models
                 self._cache.set(cache_key, models)
-                return models[:limit]
+                return models
         except Exception as e:
             logger.error(f"GitHub API failed for subject {subject}: {e}")
 
         # Fallback: return empty list
         return []
+
+    async def list_domain_subjects(self, domain: str) -> List[str]:
+        """List all subjects in a specific domain using GitHub API."""
+        cache_key = f"domain_subjects_{domain}"
+        cached = self._cache.get(cache_key)
+        if cached:
+            return cached
+
+        # Find the actual repository name that matches the domain
+        actual_repo_name = await self._find_domain_repository(domain)
+        if not actual_repo_name:
+            logger.warning(f"Could not find repository for domain '{domain}'")
+            return []
+
+        # Use GitHub API to get subjects from the found repository
+        try:
+            subjects = await self._get_subjects_from_github_api(actual_repo_name)
+            if subjects:
+                # Cache and return the subjects
+                self._cache.set(cache_key, subjects)
+                return subjects
+        except Exception as e:
+            logger.error(f"GitHub API failed for domain {domain} (repo: {actual_repo_name}): {e}")
+
+        # Fallback: return empty list
+        return []
+
+    async def _find_domain_repository(self, domain: str) -> Optional[str]:
+        """Find the actual repository name that matches the requested domain.
+
+        This method performs flexible matching to handle cases where users might
+        specify "Water" but the repo is named "SmartWater".
+
+        Args:
+            domain: The domain name to search for (case-insensitive)
+
+        Returns:
+            The exact repository name if found, None otherwise
+        """
+        try:
+            # Fetch all repositories from the smart-data-models organization
+            org_repos_url = f"https://api.github.com/orgs/{self.SMART_DATA_MODELS_ORG}/repos"
+            response = await self._run_sync_in_thread(
+                self._session.get, org_repos_url, timeout=30
+            )
+
+            if response.status_code != 200:
+                logger.error(f"GitHub API returned status {response.status_code} for {org_repos_url}")
+                return None
+
+            repos_data = response.json()
+            domain_lower = domain.lower()
+
+            # Extract repository names (filter out dataModel.* repos for domain search)
+            available_repos = [
+                repo.get("name", "") for repo in repos_data
+                if repo.get("name", "") and not repo.get("name", "").startswith("dataModel.")
+            ]
+
+            # Step 1: Exact match
+            if domain in available_repos:
+                return domain
+
+            # Step 2: Case-insensitive match
+            for repo in available_repos:
+                if repo.lower() == domain_lower:
+                    return repo
+
+            # Step 3: Fuzzy matching - try removing "Smart" prefix if present
+            if domain_lower.startswith("smart"):
+                stripped_domain = domain_lower[5:]  # Remove "smart" prefix
+                for repo in available_repos:
+                    if repo.lower() == stripped_domain:
+                        return repo
+
+            # Step 4: Reverse - if domain doesn't start with "smart", try adding it
+            if not domain_lower.startswith("smart"):
+                smart_domain = f"smart{domain_lower}"
+                for repo in available_repos:
+                    if repo.lower() == smart_domain:
+                        return repo
+
+            # Step 5: Partial match (domain contained in repo name)
+            for repo in available_repos:
+                if domain_lower in repo.lower():
+                    return repo
+
+            logger.warning(f"No repository found matching domain '{domain}'. Available domains: {available_repos[:10]}...")
+            return None
+
+        except Exception as e:
+            logger.error(f"Error finding repository for domain '{domain}': {e}")
+            return None
+
+    async def _get_subjects_from_github_api(self, domain: str) -> Optional[List[str]]:
+        """Get subjects from GitHub API repository contents."""
+        try:
+            repo_name = domain
+            subject_url = f"{self.GITHUB_API_BASE}/{self.SMART_DATA_MODELS_ORG}/{repo_name}/contents"
+            response = await self._run_sync_in_thread(
+                self._session.get, subject_url, timeout=30
+            )
+
+            if response.status_code == 200:
+                contents = response.json()
+                subjects = []
+                for item in contents:
+                    # Check both directories and files that start with "dataModel."
+                    if item["name"].startswith("dataModel."):
+                        # Remove the "dataModel." prefix to return just the subject name
+                        subjects.append(item["name"][10:])  # len("dataModel.") = 10
+                return subjects
+
+        except Exception as e:
+            logger.debug(f"GitHub API call failed for {domain}: {e}")
+
+        return None
 
     async def _get_models_from_github_api(self, subject: str) -> Optional[List[str]]:
         """Get models from GitHub API repository contents."""
@@ -185,6 +389,9 @@ class SmartDataModelsAPI:
         include_attributes: bool = False
     ) -> List[Dict[str, Any]]:
         """Perform comprehensive search across all models using pysmartdatamodels functions."""
+        # Normalize subject parameter
+        subject = self._normalize_subject(subject)
+
         results = []
         query_lower = query.lower()
 
@@ -357,7 +564,85 @@ class SmartDataModelsAPI:
         if cached:
             return cached
 
-        # Try to construct model details using pysmartdatamodels functions
+        # Try to use GitHub analyzer to get metadata
+        try:
+            analyzer = EmbeddedGitHubAnalyzer()
+            repo_url = f"https://smart-data-models.github.io/dataModel.{subject}/{model}"
+
+            # Run the synchronous analyzer in thread
+            metadata = await self._run_sync_in_thread(analyzer.generate_metadata, repo_url)
+
+            if metadata:
+                # Convert GitHub analyzer format to the expected format
+                processed_details = {
+                    "subject": metadata["subject"],
+                    "model": metadata["dataModel"],
+                    "description": metadata["description"],
+                    "version": metadata.get("version", "0.1.1"),
+                    "title": metadata.get("title", ""),
+                    "modelTags": metadata.get("modelTags", ""),
+                    "$id": metadata.get("$id", ""),
+                    "yamlUrl": metadata.get("yamlUrl", ""),
+                    "jsonSchemaUrl": metadata.get("jsonSchemaUrl", ""),
+                    "@context": metadata.get("@context", ""),
+                    "exampleKeyvaluesJson": metadata.get("exampleKeyvaluesJson", ""),
+                    "exampleKeyvaluesJsonld": metadata.get("exampleKeyvaluesJsonld", ""),
+                    "exampleNormalizedJson": metadata.get("exampleNormalizedJson", ""),
+                    "exampleNormalizedJsonld": metadata.get("exampleNormalizedJsonld", ""),
+                    "sql": metadata.get("sql", ""),
+                    "adopters": metadata.get("adopters", ""),
+                    "contributors": metadata.get("contributors", ""),
+                    "spec": metadata.get("spec", ""),
+                    "spec_DE": metadata.get("spec_DE", ""),
+                    "spec_ES": metadata.get("spec_ES", ""),
+                    "spec_FR": metadata.get("spec_FR", ""),
+                    "spec_IT": metadata.get("spec_IT", ""),
+                    "spec_JA": metadata.get("spec_JA", ""),
+                    "spec_KO": metadata.get("spec_KO", ""),
+                    "spec_ZH": metadata.get("spec_ZH", ""),
+                    "required": metadata.get("required", ["type", "id"]),
+                    "attributes": [],  # Will be populated from schema if needed
+                    "source": "github_analyzer"
+                }
+
+                # Try to get attributes from the schema
+                try:
+                    schema = await self.get_model_schema(subject, model)
+                    if schema and isinstance(schema, dict):
+                        attributes = []
+                        required_attrs = schema.get("required", [])
+
+                        properties = schema.get("properties", {})
+                        for prop_name, prop_def in properties.items():
+                            if isinstance(prop_def, dict):
+                                attr_info = {
+                                    "name": prop_name,
+                                    "type": prop_def.get("type", "string"),
+                                    "description": prop_def.get("description", f"Property {prop_name}"),
+                                    "required": prop_name in required_attrs
+                                }
+                                attributes.append(attr_info)
+
+                        processed_details["attributes"] = attributes
+                except Exception as e:
+                    logger.debug(f"Failed to get attributes from schema: {e}")
+
+                self._cache.set(cache_key, processed_details)
+                return processed_details
+
+        except Exception as e:
+            logger.debug(f"GitHub analyzer failed for {subject}/{model}: {e}")
+
+        # Fallback 1: Try basic GitHub details
+        try:
+            details = await self._get_basic_model_details_from_github(subject, model)
+            if details:
+                self._cache.set(cache_key, details)
+                return details
+        except Exception as e:
+            logger.debug(f"Basic GitHub details fallback failed for {subject}/{model}: {e}")
+
+        # Fallback 2: Try pysmartdatamodels as final fallback
         try:
             # Get attributes list for this model
             attributes_list = await self._run_sync_in_thread(psdm.attributes_datamodel, subject, model)
@@ -432,46 +717,6 @@ class SmartDataModelsAPI:
 
         except Exception as e:
             logger.debug(f"pysmartdatamodels details construction failed for {subject}/{model}: {e}")
-
-        # Fallback 1: Try to get schema from GitHub to construct details
-        try:
-            schema = await self.get_model_schema(subject, model)
-            if schema and isinstance(schema, dict):
-                attributes = []
-                required_attrs = schema.get("required", [])
-
-                properties = schema.get("properties", {})
-                for prop_name, prop_def in properties.items():
-                    if isinstance(prop_def, dict):
-                        attr_info = {
-                            "name": prop_name,
-                            "type": prop_def.get("type", "string"),
-                            "description": prop_def.get("description", f"Property {prop_name}"),
-                            "required": prop_name in required_attrs
-                        }
-                        attributes.append(attr_info)
-
-                details = {
-                    "subject": subject,
-                    "model": model,
-                    "description": schema.get("description", f"Smart Data Model for {model}"),
-                    "attributes": attributes,
-                    "required_attributes": required_attrs,
-                    "source": "github_schema"
-                }
-                self._cache.set(cache_key, details)
-                return details
-        except Exception as e:
-            logger.debug(f"GitHub schema fallback failed for {subject}/{model}: {e}")
-
-        # Fallback 2: Try basic GitHub details
-        try:
-            details = await self._get_basic_model_details_from_github(subject, model)
-            if details:
-                self._cache.set(cache_key, details)
-                return details
-        except Exception as e:
-            logger.debug(f"Basic GitHub details fallback failed for {subject}/{model}: {e}")
 
         # Ultimate fallback
         details = {
@@ -599,6 +844,10 @@ class SmartDataModelsAPI:
         Returns:
             List[Dict[str, Any]]: A list of dictionaries, each representing an example instance of the model.
         """
+        # Normalize subject parameter
+        subject = self._normalize_subject(subject)
+        repo_subject = self._normalize_subject(repo_subject)
+
         cache_key = f"examples_{subject}_{model}_{repo_subject}"
 
         # Try cache first
@@ -794,7 +1043,10 @@ class SmartDataModelsAPI:
 
         for subject in subjects:
             try:
-                models = await self.list_models_in_subject(subject, limit=100)
+                # Normalize subject parameter
+                normalized_subject = self._normalize_subject(subject)
+
+                models = await self.list_models_in_subject(normalized_subject, limit=100)
 
                 for model_name in models[:50]:  # Limit to avoid too many requests
                     try:

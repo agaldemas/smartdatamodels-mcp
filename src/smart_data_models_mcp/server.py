@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 # Initialize the FastMCP server
 app = FastMCP(
     name="smart-data-models-mcp",
-    instructions="MCP server for FIWARE Smart Data Models - enabling AI agents to work with NGSI-LD entities"
+    instructions="MCP server for FIWARE Smart Data Models - enabling AI agents to work with NGSI (V2 or LD) entities"
 )
 
 # Global instances for data access and utilities
@@ -48,26 +48,24 @@ schema_validator = model_validator.SchemaValidator()
 class SearchModelsParams(BaseModel):
     """Parameters for searching data models."""
     query: str = Field(..., description="Search query (model name, attributes, or keywords)")
-    subject: Optional[str] = Field(None, description="Limit search to specific subject or domain")
-    limit: int = Field(20, description="Maximum number of results to return")
+    subject: Optional[str] = Field(None, description="Limit search to specific subject (e.g., 'dataModel.User')")
     include_attributes: bool = Field(False, description="Include attribute details in results")
 
 
 class SubjectModelsParams(BaseModel):
     """Parameters for listing models in a subject."""
-    subject: Optional[str] = Field(None, description="Subject or domain name (e.g., 'SmartCities', 'Energy')")
-    limit: int = Field(50, description="Maximum number of models to return")
+    subject: Optional[str] = Field(None, description="Subject name (e.g., 'dataModel.User', 'dataModel.Energy')")
 
 
 class ModelDetailsParams(BaseModel):
     """Parameters for getting model details."""
-    subject: Optional[str] = Field(None, description="Subject or domain name")
+    subject: Optional[str] = Field(None, description="Subject name (e.g., 'dataModel.User')")
     model: str = Field(..., description="Model name")
 
 
 class ValidateDataParams(BaseModel):
     """Parameters for validating data against a model."""
-    subject: Optional[str] = Field(None, description="Subject or domain name")
+    subject: Optional[str] = Field(None, description="Subject name (e.g., 'dataModel.User')")
     model: str = Field(..., description="Model name")
     data: Union[str, Dict[str, Any]] = Field(..., description="Data to validate (JSON string or dict)")
 
@@ -83,41 +81,66 @@ class GenerateNGSILDParams(BaseModel):
 class SuggestModelsParams(BaseModel):
     """Parameters for suggesting matching models."""
     data: Union[str, Dict[str, Any]] = Field(..., description="Data to analyze (JSON string or dict)")
-    top_k: int = Field(5, description="Number of top matches to return")
+
+
+class DomainSubjectsParams(BaseModel):
+    """Parameters for listing subjects in a domain."""
+    domain: str = Field(..., description="The name of the domain to get subjects for")
 
 
 # Tool definitions
 @app.tool()
-async def search_data_models(params: SearchModelsParams = Field(..., description=SearchModelsParams.__doc__)) -> str:
+async def search_data_models(
+    query: str = Field(..., description="The search query (model name, attributes, or keywords)"),
+    subject: Optional[str] = Field(None, description="Limits the search to a specific subject (e.g., 'dataModel.User')"),
+    include_attributes: bool = Field(False, description="Whether to include attribute details in the results")
+) -> str:
     """Search for data models across subjects by name, attributes, or keywords.
-
-    Args:
-        params: An object containing the search parameters.
-            - `query` (Optional[str]): The search query (model name, attributes, or keywords).
-            - `subject` (Optional[str]): Limits the search to a specific subject or domain.
-            - `limit` (int): The maximum number of results to return (default: 20).
-            - `include_attributes` (bool): Whether to include attribute details in the results (default: False).
 
     Returns:
         JSON string with search results
     """
     try:
+        subject_param = subject if subject else None
         results = await data_api.search_models(
-            query=params.query,
-            subject=params.subject,
-            limit=params.limit,
-            include_attributes=params.include_attributes,
+            query=query,
+            subject=subject_param,
+            include_attributes=include_attributes,
         )
 
         return json.dumps({
             "success": True,
             "results": results,
             "count": len(results),
-            "query": params.query
+            "query": query
         }, indent=2)
 
     except Exception as e:
         logger.error(f"Search failed: {e}")
+        return json.dumps({
+            "success": False,
+            "error": str(e)
+        }, indent=2)
+
+
+@app.tool()
+async def list_domains() -> str:
+    """List all available Smart Data Model domains.
+
+    Returns:
+        JSON string with available domains
+    """
+    try:
+        domains = await data_api.list_domains()
+
+        return json.dumps({
+            "success": True,
+            "domains": domains,
+            "count": len(domains)
+        }, indent=2)
+
+    except Exception as e:
+        logger.error(f"List domains failed: {e}")
         return json.dumps({
             "success": False,
             "error": str(e)
@@ -149,27 +172,23 @@ async def list_subjects() -> str:
 
 
 @app.tool()
-async def list_models_in_subject(params: SubjectModelsParams = Field(..., description=SubjectModelsParams.__doc__)) -> str:
+async def list_models_in_subject(
+    subject: Optional[str] = Field(None, description="The name of the subject (e.g., 'dataModel.SmartCities', 'dataModel.Energy')")
+) -> str:
     """List all data models within a specific subject.
-
-    Args:
-        params: An object containing the subject and limit parameters.
-            - `subject` (str): The name of the subject or domain (e.g., 'SmartCities', 'Energy').
-            - `limit` (int): The maximum number of models to return (default: 50).
 
     Returns:
         JSON string with models in the subject
     """
     try:
-        subject_param = params.subject if params.subject else None
+        subject_param = subject if subject else None
         models = await data_api.list_models_in_subject(
-            subject=subject_param,
-            limit=params.limit
+            subject=subject_param
         )
 
         return json.dumps({
             "success": True,
-            "subject": params.subject,
+            "subject": subject,
             "models": models,
             "count": len(models)
         }, indent=2)
@@ -179,33 +198,31 @@ async def list_models_in_subject(params: SubjectModelsParams = Field(..., descri
         return json.dumps({
             "success": False,
             "error": str(e),
-            "subject": params.subject
+            "subject": subject
         }, indent=2)
 
 
 @app.tool()
-async def get_model_details(params: ModelDetailsParams = Field(..., description=ModelDetailsParams.__doc__)) -> str:
+async def get_model_details(
+    model: str = Field(..., description="The name of the model"),
+    subject: Optional[str] = Field(None, description="The name of the subject (e.g., 'dataModel.User')")
+) -> str:
     """Get detailed information about a specific data model.
-
-    Args:
-        params: An object containing the subject and model identifiers.
-            - `subject` (str): The name of the subject or domain.
-            - `model` (str): The name of the model.
 
     Returns:
         JSON string with model details including schema, examples, and metadata
     """
     try:
-        subject_param = params.subject if params.subject else None
+        subject_param = subject if subject else None
         details = await data_api.get_model_details(
             subject=subject_param,
-            model=params.model
+            model=model
         )
 
         return json.dumps({
             "success": True,
-            "subject": params.subject,
-            "model": params.model,
+            "subject": subject,
+            "model": model,
             "details": details
         }, indent=2)
 
@@ -214,100 +231,96 @@ async def get_model_details(params: ModelDetailsParams = Field(..., description=
         return json.dumps({
             "success": False,
             "error": str(e),
-            "subject": params.subject,
-            "model": params.model
+            "subject": subject,
+            "model": model
         }, indent=2)
 
 
 @app.tool()
-async def validate_against_model(params: ValidateDataParams = Field(..., description=ValidateDataParams.__doc__)) -> str:
+async def validate_against_model(
+    model: str = Field(..., description="The name of the model"),
+    data: Union[str, Dict[str, Any]] = Field(..., description="The data to validate (can be a JSON string or a dictionary)"),
+    subject: Optional[str] = Field(None, description="The name of the subject (e.g., 'dataModel.User')")
+) -> str:
     """Validate data against a Smart Data Model schema.
-
-    Args:
-        params: An object containing the validation parameters.
-            - `subject` (str): The name of the subject or domain.
-            - `model` (str): The name of the model.
-            - `data` (Union[str, Dict[str, Any]]): The data to validate (can be a JSON string or a dictionary).
 
     Returns:
         JSON string with validation results
     """
     try:
         # Parse data if it's a string
-        data = params.data
+        parsed_data = data
         if isinstance(data, str):
-            data = json.loads(data)
+            parsed_data = json.loads(data)
 
-        subject_param = params.subject if params.subject else None
+        subject_param = subject if subject else None
         is_valid, errors = await schema_validator.validate_data(
             subject=subject_param,
-            model=params.model,
-            data=data
+            model=model,
+            data=parsed_data
         )
 
         return json.dumps({
             "success": True,
-            "subject": params.subject,
-            "model": params.model,
+            "subject": subject,
+            "model": model,
             "is_valid": is_valid,
             "errors": errors,
-            "data_keys": list(data.keys()) if isinstance(data, dict) else None
+            "data_keys": list(parsed_data.keys()) if isinstance(parsed_data, dict) else None
         }, indent=2)
 
     except json.JSONDecodeError as e:
         return json.dumps({
             "success": False,
             "error": f"Invalid JSON data: {e}",
-            "data": str(params.data)
+            "data": str(data)
         }, indent=2)
     except Exception as e:
         logger.error(f"Validation failed: {e}")
         return json.dumps({
             "success": False,
             "error": str(e),
-            "subject": params.subject,
-            "model": params.model
+            "subject": subject,
+            "model": model
         }, indent=2)
 
 
 @app.tool()
-async def generate_ngsi_ld_from_json(params: GenerateNGSILDParams = Field(..., description=GenerateNGSILDParams.__doc__)) -> str:
+async def generate_ngsi_ld_from_json(
+    data: Union[str, Dict[str, Any]] = Field(..., description="The input data (can be a JSON string or a dictionary)"),
+    entity_type: Optional[str] = Field(None, description="The NGSI-LD entity type"),
+    entity_id: Optional[str] = Field(None, description="The NGSI-LD entity ID"),
+    context: Optional[str] = Field(None, description="The Context URL for the NGSI-LD entity")
+) -> str:
     """Generate NGSI-LD compliant entities from arbitrary JSON data.
-
-    Args:
-        params: An object containing the generation parameters.
-            - `data` (Union[str, Dict[str, Any]]): The input data (can be a JSON string or a dictionary).
-            - `entity_type` (Optional[str]): The NGSI-LD entity type.
-            - `entity_id` (Optional[str]): The NGSI-LD entity ID.
-            - `context` (Optional[str]): The Context URL for the NGSI-LD entity.
 
     Returns:
         JSON string with generated NGSI-LD entity
     """
     try:
         # Parse data if it's a string
-        data = params.data
+        parsed_data = data
         if isinstance(data, str):
-            data = json.loads(data)
+            parsed_data = json.loads(data)
 
         entity = await ngsi_generator.generate_ngsi_ld(
-            data=data,
-            entity_type=params.entity_type,
-            entity_id=params.entity_id,
-            context=params.context
+            data=parsed_data,
+            entity_type=entity_type,
+            entity_id=entity_id,
+            context=context
         )
 
         return json.dumps({
             "success": True,
             "entity": entity,
-            "original_data_keys": list(data.keys()) if isinstance(data, dict) else None
+            "original_data_keys": list(parsed_data.keys()) if isinstance(parsed_data, dict) else None
         }, indent=2)
 
     except json.JSONDecodeError as e:
         return json.dumps({
             "success": False,
             "error": f"Invalid JSON data: {e}",
-            "data": str(params.data)
+            "data": str(data)
         }, indent=2)
     except Exception as e:
         logger.error(f"NGSI-LD generation failed: {e}")
@@ -318,45 +331,69 @@ async def generate_ngsi_ld_from_json(params: GenerateNGSILDParams = Field(..., d
 
 
 @app.tool()
-async def suggest_matching_models(params: SuggestModelsParams = Field(..., description=SuggestModelsParams.__doc__)) -> str:
+async def suggest_matching_models(
+    data: Union[str, Dict[str, Any]] = Field(..., description="The data to analyze (can be a JSON string or a dictionary)")
+) -> str:
     """Suggest Smart Data Models that match provided data structure.
-
-    Args:
-        params: An object containing the suggestion parameters.
-            - `data` (Union[str, Dict[str, Any]]): The data to analyze (can be a JSON string or a dictionary).
-            - `top_k` (int): The number of top matching models to return (default: 5).
 
     Returns:
         JSON string with suggested models and similarity scores
     """
     try:
         # Parse data if it's a string
-        data = params.data
+        parsed_data = data
         if isinstance(data, str):
-            data = json.loads(data)
+            parsed_data = json.loads(data)
 
         suggestions = await data_api.suggest_matching_models(
-            data=data,
-            top_k=params.top_k
+            data=parsed_data
         )
 
         return json.dumps({
             "success": True,
             "suggestions": suggestions,
-            "data_keys": list(data.keys()) if isinstance(data, dict) else None
+            "data_keys": list(parsed_data.keys()) if isinstance(parsed_data, dict) else None
         }, indent=2)
 
     except json.JSONDecodeError as e:
         return json.dumps({
             "success": False,
             "error": f"Invalid JSON data: {e}",
-            "data": str(params.data)
+            "data": str(data)
         }, indent=2)
     except Exception as e:
         logger.error(f"Model suggestion failed: {e}")
         return json.dumps({
             "success": False,
             "error": str(e)
+        }, indent=2)
+
+
+@app.tool()
+async def list_domain_subjects(
+    domain: str = Field(..., description="The name of the domain to get subjects for")
+) -> str:
+    """List all subjects belonging to a specific domain.
+
+    Returns:
+        JSON string with subjects in the domain
+    """
+    try:
+        subjects = await data_api.list_domain_subjects(domain)
+
+        return json.dumps({
+            "success": True,
+            "domain": domain,
+            "subjects": subjects,
+            "count": len(subjects)
+        }, indent=2)
+
+    except Exception as e:
+        logger.error(f"List domain subjects failed: {e}")
+        return json.dumps({
+            "success": False,
+            "error": str(e),
+            "domain": domain
         }, indent=2)
 
 

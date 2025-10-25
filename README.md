@@ -69,7 +69,6 @@ To configure the smart-data-models-mcp server for use with Cline, add the follow
   "mcpServers": {
     "smart-data-models": {
       "autoApprove": [
-        "list_subjects"
       ],
       "disabled": false,
       "timeout": 60,
