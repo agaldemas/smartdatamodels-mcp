@@ -89,9 +89,9 @@ class SmartDataModelsAPI:
 
     # Known domains from the specification
     KNOWN_DOMAINS = [
-        "SmartCities", "Agrifood", "Water", "Energy", "Logistics",
-        "Robotics", "Sensoring", "Cross sector", "Health", "Destination",
-        "Environment", "Aeronautics", "Manufacturing", "Incubated", "Harmonization"
+        "SmartCities", "SmartAgrifood", "SmartWater", "SmartEnergy", "SmartLogistics",
+        "SmartRobotics", "Smart-Sensoring", "Cross sector", "SmartHealth", "SmartDestination",
+        "SmartEnvironment", "SmartAeronautics", "SmartManufacturing", "Incubated", "Harmonization"
     ]
     GITHUB_API_BASE = "https://api.github.com/repos"
     GITHUB_RAW_BASE = "https://raw.githubusercontent.com"
@@ -1003,7 +1003,9 @@ class SmartDataModelsAPI:
 
         # Fallback: try to get from GitHub examples
         try:
-            examples = await self._get_examples_from_github(subject, model, repo_subject=repo_subject)
+            # Denormalize subject for GitHub API call (remove dataModel. prefix)
+            denormalized_subject = subject[10:] if subject.startswith("dataModel.") else subject
+            examples = await self._get_examples_from_github(denormalized_subject, model, repo_subject=None)
             if examples:
                 logger.info("Get Model Examples: GitHub success for {}/{} - {} examples found", subject, model, len(examples))
                 self._cache.set(cache_key, examples)
@@ -1018,7 +1020,7 @@ class SmartDataModelsAPI:
         if examples:
             logger.info("Get Model Examples: Basic generation successful for {}/{}", subject, model)
         else:
-            logger.warning("Get Model Examples: Basic generation failed for {}/{} - no examples available", subject, model)
+            logger.warning(f"Get Model Examples: Basic generation failed for {subject}/{model} - no examples available")
 
         self._cache.set(cache_key, examples)
         return examples
@@ -1032,26 +1034,29 @@ class SmartDataModelsAPI:
             repo_name = f"dataModel.{actual_repo_subject}"
             # Try various common example file names
             example_paths = [
-                "example.json",
                 "examples/example.json",
-                "example.jsonld",
                 "examples/example.jsonld"
             ]
 
             for path in example_paths:
                 example_url = f"{self.GITHUB_RAW_BASE}/{self.SMART_DATA_MODELS_ORG}/{repo_name}/master/{model}/{path}"
+                logger.debug(f"Trying example URL: {example_url}")
                 try:
                     response = await self._run_sync_in_thread(
                         self._session.get, example_url, timeout=30
                     )
+                    logger.debug(f"Response status for {example_url}: {response.status_code}")
 
                     if response.status_code == 200:
                         try:
                             example = response.json()
+                            logger.info(f"Found valid example at {path}")
                             return [example] if isinstance(example, dict) else example
-                        except json.JSONDecodeError:
+                        except json.JSONDecodeError as e:
+                            logger.debug(f"Failed to parse JSON from {example_url}: {e}")
                             continue
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"HTTP error for {example_url}: {e}")
                     continue
 
         except Exception as e:

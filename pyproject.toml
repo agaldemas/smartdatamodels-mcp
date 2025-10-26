@@ -29,6 +29,18 @@ dependencies = [
     "python-dotenv>=1.1.1",
 ]
 
+[project.optional-dependencies]
+test = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "pytest-asyncio>=0.21.0",
+]
+dev = [
+    "ruff>=0.1.0",
+    "black>=23.0.0",
+    "mypy>=1.0.0",
+]
+
 [project.scripts]
 smart-data-models-mcp = "smart_data_models_mcp.server:main"
 

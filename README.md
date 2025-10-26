@@ -380,6 +380,10 @@ smart_data_models_mcp/
 
 ### Testing
 
+The project includes a comprehensive test suite to ensure all functionality works correctly. Tests are located in the `tests/` directory and include integration tests and API validation.
+
+#### Running Tests
+
 ```bash
 # Install test dependencies
 pip install -e .[test]
@@ -389,7 +393,46 @@ pytest
 
 # Run with coverage
 pytest --cov=smart_data_models_mcp --cov-report=html
+
+# Run specific test files
+python tests/test_data_access.py  # Integration tests for data access layer
+python tests/test_basic.py        # Unit tests for different modules
+
+# Run tests with verbose output
+pytest -v tests/
 ```
+
+#### Test Files
+
+- **`tests/test_data_access.py`**: Comprehensive integration tests for the `SmartDataModelsAPI` class
+  - Tests domain and subject listing
+  - Tests model discovery and details retrieval
+  - Tests schema and example fetching
+  - Tests search functionality
+  - Validates API responses and caching behavior
+
+- **`tests/test_basic.py`**: Unit tests for individual modules
+  - Tests NGSI-LD generation logic
+  - Tests schema validation functionality
+  - Tests module imports and basic functionality
+
+#### Manual Testing
+
+You can also run the integration test manually to verify your setup:
+
+```bash
+# From the project root directory
+python tests/test_data_access.py
+```
+
+This test will:
+1. Verify all domains can be listed
+2. Test subject discovery across domains
+3. Test model listing and details retrieval
+4. Test schema and example fetching
+5. Validate search and generation capabilities
+
+Expected output should show all tests passing with a final message: "***All API tests completed successfully!***"
 
 ## Contributing
 

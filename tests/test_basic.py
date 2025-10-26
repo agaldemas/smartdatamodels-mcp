@@ -35,7 +35,9 @@ class TestDataAccess(unittest.TestCase):
             self.assertGreater(len(domains), 0)
             # Should include expected domains
             self.assertIn("SmartCities", domains)
-            self.assertIn("Energy", domains)
+            self.assertIn("SmartEnergy", domains)
+            self.assertIn("SmartAgrifood", domains)
+            self.assertIn("SmartWater", domains)
 
         # Run the async test
         asyncio.run(test_async())
