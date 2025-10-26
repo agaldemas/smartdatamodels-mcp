@@ -129,9 +129,11 @@ class SmartDataModelsAPI:
 
     async def list_domains(self) -> List[str]:
         """List all available domains."""
+        logger.info("List Domains: Starting - using GitHub API to fetch domain list")
         cache_key = "domains"
         cached = self._cache.get(cache_key)
         if cached:
+            logger.debug("List Domains: Returning cached data")
             return cached
 
         # Fetch domains from GitHub organization repositories
@@ -166,19 +168,24 @@ class SmartDataModelsAPI:
 
     async def list_subjects(self) -> List[str]:
         """List all available subjects."""
+        logger.info("List Subjects: Starting - trying pysmartdatamodels then fallback to GitHub API")
         cache_key = "subjects"
         cached = self._cache.get(cache_key)
         if cached:
+            logger.debug("List Subjects: Returning cached data")
             return cached
 
         # Try pysmartdatamodels first
         if psdm:
             try:
+                logger.debug("List Subjects: Attempting pysmartdatamodels.list_all_subjects()")
                 subjects = await self._run_sync_in_thread(psdm.list_all_subjects)
+                logger.info("List Subjects: Success with pysmartdatamodels - {} subjects found", len(subjects) if subjects else 0)
                 self._cache.set(cache_key, subjects)
                 return subjects
             except (AttributeError, Exception) as e:
                 logger.warning(f"pysmartdatamodels list_all_subjects failed: {e}")
+                logger.info("List Subjects: pysmartdatamodels failed, trying GitHub API")
 
         # Fallback: Get subjects from GitHub API
         try:
@@ -214,6 +221,8 @@ class SmartDataModelsAPI:
         Args:
             subject: Subject name (may or may not include 'dataModel.' prefix)
         """
+        logger.info("List Models in Subject: Starting - subject='{}' - using GitHub API", subject)
+
         # Denormalize subject name for internal use
         if subject.startswith("dataModel."):
             subject = subject[10:]  # Remove "dataModel." prefix
@@ -221,19 +230,25 @@ class SmartDataModelsAPI:
         cache_key = f"subject_models_{subject}"
         cached = self._cache.get(cache_key)
         if cached:
+            logger.debug("List Models in Subject: Returning cached data - {} models", len(cached) if cached else 0)
             return cached
 
         # Use GitHub API to get models from the repository
         try:
+            logger.debug("List Models in Subject: Calling _get_models_from_github_api for subject '{}'", subject)
             models = await self._get_models_from_github_api(subject)
             if models:
+                logger.info("List Models in Subject: GitHub API success - {} models found for subject '{}'", len(models), subject)
                 # Cache and return the models
                 self._cache.set(cache_key, models)
                 return models
+            else:
+                logger.warning("List Models in Subject: No models found for subject '{}' via GitHub API", subject)
         except Exception as e:
             logger.error(f"GitHub API failed for subject {subject}: {e}")
 
         # Fallback: return empty list
+        logger.info("List Models in Subject: Fallback - returning empty list for subject '{}'", subject)
         return []
 
     async def list_domain_subjects(self, domain: str) -> List[str]:
@@ -393,16 +408,19 @@ class SmartDataModelsAPI:
         Returns:
             List[Dict[str, Any]]: A list of dictionaries, each representing a matching data model.
         """
+        logger.info("Search Models: Starting - query='{}', subject='{}', limit={}, include_attributes={} - using comprehensive search", query, subject, limit, include_attributes)
         cache_key = f"search_{query}_{subject}_{limit}_{include_attributes}"
 
         # Try cache first
         cached = self._cache.get(cache_key)
         if cached:
+            logger.debug("Search Models: Returning cached data - {} results", len(cached) if cached else 0)
             return cached
 
         # Perform comprehensive text search across subjects and models
         results = await self._comprehensive_model_search(query, subject, limit, include_attributes)
 
+        logger.info("Search Models: Search completed - {} results found", len(results) if results else 0)
         self._cache.set(cache_key, results)
         return results
 
@@ -652,15 +670,18 @@ class SmartDataModelsAPI:
             Dict[str, Any]: A dictionary containing detailed information about the model,
                             including its description, attributes, and source.
         """
+        logger.info("Get Model Details: Starting - subject='{}', model='{}' - strategies: GitHub analyzer -> GitHub basic -> pysmartdatamodels -> fallback", subject, model)
         cache_key = f"model_details_{subject}_{model}"
 
         # Try cache first
         cached = self._cache.get(cache_key)
         if cached:
+            logger.debug("Get Model Details: Returning cached data for {}/{}", subject, model)
             return cached
 
         # Try to use GitHub analyzer to get metadata
         try:
+            logger.debug("Get Model Details: Attempting GitHub analyzer for {}/{}", subject, model)
             analyzer = EmbeddedGitHubAnalyzer()
             repo_url = f"https://smart-data-models.github.io/dataModel.{subject}/{model}"
 
@@ -668,6 +689,7 @@ class SmartDataModelsAPI:
             metadata = await self._run_sync_in_thread(analyzer.generate_metadata, repo_url)
 
             if metadata:
+                logger.info("Get Model Details: GitHub analyzer success for {}/{} - source: github_analyzer", subject, model)
                 # Convert GitHub analyzer format to the expected format
                 processed_details = {
                     "subject": metadata["subject"],
@@ -727,15 +749,18 @@ class SmartDataModelsAPI:
 
         except Exception as e:
             logger.debug(f"GitHub analyzer failed for {subject}/{model}: {e}")
+            logger.info("Get Model Details: GitHub analyzer failed for {}/{} - trying fallback GitHub basic", subject, model)
 
         # Fallback 1: Try basic GitHub details
         try:
             details = await self._get_basic_model_details_from_github(subject, model)
             if details:
+                logger.info("Get Model Details: GitHub basic success for {}/{} - source: {}", subject, model, details.get("source", "unknown"))
                 self._cache.set(cache_key, details)
                 return details
         except Exception as e:
             logger.debug(f"Basic GitHub details fallback failed for {subject}/{model}: {e}")
+            logger.info("Get Model Details: GitHub basic failed for {}/{} - trying pysmartdatamodels", subject, model)
 
         # Fallback 2: Try pysmartdatamodels as final fallback
         try:
@@ -939,6 +964,7 @@ class SmartDataModelsAPI:
         Returns:
             List[Dict[str, Any]]: A list of dictionaries, each representing an example instance of the model.
         """
+        logger.info("Get Model Examples: Starting - subject='{}', model='{}' - strategies: pysmartdatamodels -> GitHub -> generation", subject, model)
         # Normalize subject parameter
         subject = self._normalize_subject(subject)
         repo_subject = self._normalize_subject(repo_subject)
@@ -948,10 +974,12 @@ class SmartDataModelsAPI:
         # Try cache first
         cached = self._cache.get(cache_key)
         if cached:
+            logger.debug("Get Model Examples: Returning cached data for {}/{}", subject, model)
             return cached
 
         # Try pysmartdatamodels with schema URL (it requires a full schema URL, not subject/model)
         try:
+            logger.debug("Get Model Examples: Attempting pysmartdatamodels for {}/{}", subject, model)
             # Construct the schema URL first
             actual_repo_subject = repo_subject if repo_subject else subject
             repo_name = f"dataModel.{actual_repo_subject}"
@@ -960,6 +988,7 @@ class SmartDataModelsAPI:
             examples = await self._run_sync_in_thread(psdm.ngsi_ld_example_generator, schema_url)
 
             if examples and examples != "dataModel" and examples != "False":
+                logger.info("Get Model Examples: pysmartdatamodels success for {}/{} - {} examples generated", subject, model, len(examples) if isinstance(examples, list) else 1)
                 if isinstance(examples, dict):
                     examples = [examples]
                 elif isinstance(examples, list):
@@ -970,19 +999,26 @@ class SmartDataModelsAPI:
 
         except Exception as e:
             logger.debug(f"pysmartdatamodels examples failed for {subject}/{model}: {e}")
+            logger.info("Get Model Examples: pysmartdatamodels failed for {}/{} - trying GitHub", subject, model)
 
         # Fallback: try to get from GitHub examples
         try:
             examples = await self._get_examples_from_github(subject, model, repo_subject=repo_subject)
             if examples:
+                logger.info("Get Model Examples: GitHub success for {}/{} - {} examples found", subject, model, len(examples))
                 self._cache.set(cache_key, examples)
                 return examples
         except Exception as e:
             logger.debug(f"GitHub examples failed for {subject}/{model}: {e}")
+            logger.info("Get Model Examples: GitHub failed for {}/{} - trying basic generation", subject, model)
 
         # Ultimate fallback: generate basic example
         example = await self._generate_basic_example(subject, model)
         examples = [example] if example else []
+        if examples:
+            logger.info("Get Model Examples: Basic generation successful for {}/{}", subject, model)
+        else:
+            logger.warning("Get Model Examples: Basic generation failed for {}/{} - no examples available", subject, model)
 
         self._cache.set(cache_key, examples)
         return examples
