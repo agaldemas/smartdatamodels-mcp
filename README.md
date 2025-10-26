@@ -527,3 +527,8 @@ MIT License - see LICENSE file for details.
 ---
 
 *Built with ❤️ for the FIWARE ecosystem and AI agent integration.*
+
+## 🤖 AI Contributors
+
+Special thanks to our AI collaborators:
+- **Cline**: AI Assistant for code development, project structure, and automated testing
