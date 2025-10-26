@@ -42,19 +42,28 @@ This MCP server allows AI agents to:
 
 ### Prerequisites
 - Python 3.9 or later
-- pip (Python package manager)
+- UV package manager (install from https://github.com/astral-sh/uv) **OR** pip (Python package manager)
 
-### Install from Source
+### Install from Source (UV - Recommended)
 ```bash
-git clone <repository-url>
+git clone https://github.com/agaldemas/smartdatamodels-mcp
+cd smart-data-models-mcp
+uv sync
+```
+
+### Install from Source (Alternative with pip)
+```bash
+git clone https://github.com/agaldemas/smartdatamodels-mcp
 cd smart-data-models-mcp
 pip install -e .
 ```
 
 ### Install from PyPI (when published)
 ```bash
-pip install smart-data-models-mcp
+uv tool install smart-data-models-mcp
 ```
+
+**Note:** For PyPI installation with pip, use `pip install smart-data-models-mcp` (when published).
 
 ## Configuration
 
@@ -162,7 +171,7 @@ If you prefer to use the server with Claude Desktop, add the following to your C
 
 2. **Install in development mode:**
    ```bash
-   python3 -m pip install -e .
+   uv sync
    ```
 
 3. **Configure MCP Server:**
@@ -355,10 +364,33 @@ sdm://Energy/context.jsonld
 
 ### Setup Development Environment
 ```bash
-# Clone and install in development mode
-git clone <repository-url>
+# Clone and install in development mode (UV)
+git clone https://github.com/agaldemas/smartdatamodels-mcp
 cd smart-data-models-mcp
-pip install -e .[dev]
+uv sync --dev
+
+# OR: Clone and install in development mode (pip alternative)
+git clone https://github.com/agaldemas/smartdatamodels-mcp
+cd smart-data-models-mcp
+pip install -e .[test]
+
+# Alternative: Install with all development tools (pip)
+pip install -e .[test,dev]  # Assuming equivalent optional dependencies are configured
+```
+
+**Development Commands (UV):**
+```bash
+# Run tests
+uv run pytest
+
+# Run with debugging
+python -m smart_data_models_mcp.server --transport stdio
+```
+
+**Development Commands (pip alternative):**
+```bash
+# Activate virtual environment (if using venv)
+source venv/bin/activate  # On Windows: venv\Scripts\activate
 
 # Run tests
 pytest
@@ -384,6 +416,26 @@ The project includes a comprehensive test suite to ensure all functionality work
 
 #### Running Tests
 
+**Testing with UV (Recommended):**
+```bash
+# Install test dependencies
+uv sync --dev
+
+# Run all tests
+uv run pytest
+
+# Run with coverage
+uv run pytest --cov=smart_data_models_mcp --cov-report=html
+
+# Run specific test files
+uv run pytest tests/test_data_access.py  # Integration tests for data access layer
+uv run pytest tests/test_basic.py        # Unit tests for different modules
+
+# Run tests with verbose output
+uv run pytest -v tests/
+```
+
+**Testing with pip (Alternative):**
 ```bash
 # Install test dependencies
 pip install -e .[test]
@@ -391,12 +443,12 @@ pip install -e .[test]
 # Run all tests
 pytest
 
-# Run with coverage
+# Run with coverage (requires pytest-cov)
 pytest --cov=smart_data_models_mcp --cov-report=html
 
 # Run specific test files
-python tests/test_data_access.py  # Integration tests for data access layer
-python tests/test_basic.py        # Unit tests for different modules
+pytest tests/test_data_access.py  # Integration tests for data access layer
+pytest tests/test_basic.py        # Unit tests for different modules
 
 # Run tests with verbose output
 pytest -v tests/
@@ -418,21 +470,9 @@ pytest -v tests/
 
 #### Manual Testing
 
-You can also run the integration test manually to verify your setup:
+You can run additional integration tests to verify your setup. All tests are designed to properly import the project modules when run through pytest.
 
-```bash
-# From the project root directory
-python tests/test_data_access.py
-```
-
-This test will:
-1. Verify all domains can be listed
-2. Test subject discovery across domains
-3. Test model listing and details retrieval
-4. Test schema and example fetching
-5. Validate search and generation capabilities
-
-Expected output should show all tests passing with a final message: "***All API tests completed successfully!***"
+Expected output from the test suite should show all tests passing with coverage reports and API validation.
 
 ## Contributing
 

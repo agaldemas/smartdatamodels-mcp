@@ -404,7 +404,7 @@ async def get_model_schema(subject: str, model: str) -> str:
     """Get the JSON schema for a specific Smart Data Model.
 
     Args:
-        subject: Subject or domain name
+        subject: Subject (must start with 'dataModel.')
         model: Model name
 
     Returns:
@@ -424,7 +424,7 @@ async def get_model_examples(subject: str, model: str) -> str:
     """Get example instances for a specific Smart Data Model.
 
     Args:
-        subject: Subject or domain name
+        subject: Subject (must start with 'dataModel.')
         model: Model name
 
     Returns:
@@ -444,7 +444,7 @@ async def get_subject_context(subject: str) -> str:
     """Get the JSON-LD context for a subject.
 
     Args:
-        subject: Subject or domain name
+        subject: Subject (must start with 'dataModel.')
 
     Returns:
         JSON-LD context as string

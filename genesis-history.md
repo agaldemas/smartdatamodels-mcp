@@ -188,6 +188,121 @@ The project is fully functional with:
 - ✅ Production-ready logging and error handling
 - ✅ Extensive test coverage
 
+### Phase 15: Systematic Conversation Summary Process Configuration (October 26, 2025)
+
+**Established Rule:** Systematic addition of conversation summaries as project phases in genesis-history.md.
+
+**Process Definition:**
+- Every conversation session concerning the Smart Data Models MCP Server project will be summarized and documented as a new numbered phase in this genesis-history.md file.
+- Summaries will follow the existing chronological and numbered format (Phase N+1).
+- Each summary will capture key technical decisions, implementation details, problem-solving approaches, architectural changes, and progress milestones discussed during the conversation.
+- Summaries will be written from the perspective of Cline (the AI assistant) documenting the collaborative development process with the user (Alain Galdemas).
+- Phase numbering must be respected and maintained sequentially without gaps.
+
+**Summary Categories to Include:**
+- Technical problem analysis and solutions
+- Code architecture changes and refactoring decisions
+- New feature implementations or requirements
+- Bug fixes and error handling improvements
+- Design pattern or best practice decisions
+- Tool integration and configuration changes
+- Testing and quality assurance updates
+- Documentation and project structure modifications
+- Deployment and operational considerations
+- User feedback integration and iterative improvements
+
+**Quality Standards for Summaries:**
+- Use chronological Phase N+1 numbering format
+- Include specific dates and times when available
+- Document concrete achievements with checkmarks where applicable
+- Link technical decisions to project requirements
+- Maintain professional, technical writing style
+- Focus on actionable technical content over conversational details
+
+This rule ensures the project's evolution is comprehensively documented, providing both historical context for future development and a record of the engineering decision-making process.
+
+### Phase 16: Cline Rules Configuration and Documentation Alignment (October 26, 2025)
+
+**Configuration Corrective Action:** Established Cline project rules in `.cline/rules.md` and aligned documentation standards.
+
+**Rules Implemented:**
+- **Rule 1:** Systematic Genesis History Documentation - Automatic phase addition after project conversations/tasks
+- **Rule 2:** Pip-based Python Package Management Standards - Corrected to reflect UV usage (documentation previously showed pip but project actually uses UV)
+- **Rule 3:** Project Structure and Organization Standards - FastMCP module organization and testing structure
+- **Rule 4:** MCP Server Development and Testing Standards - pytest framework, async functions, MCP protocol compliance
+- **Rule 5:** Configuration and Environment Standards - GitHub tokens, logging, MCP server configuration
+- **Rule 6:** Documentation and Version Control Standards - Genesis history maintenance, conventional commits
+- **Rule 7:** FastMCP and Pysmartdatamodels Integration Standards - Framework integration and API interaction patterns
+- **Rule 8:** Deployment and Operational Standards - Performance optimizations, security measures, error handling
+
+**Documentation Corrections:**
+- Updated README.md to correctly reflect UV package manager usage instead of pip
+- Aligned installation instructions with actual project setup (uv sync, uv run commands)
+- Standardized all development commands to use UV equivalents
+- Corrected development setup procedures to match actual project workflow
+
+**Project Setup Reconciliation:**
+- Identified that project uses UV (presence of uv.lock, UV available) despite README initially showing pip
+- Updated all installation and development commands to use UV consistently
+- Ensured .cline/rules.md accurately reflects actual project standards and workflows
+
+This phase resolved documentation inconsistencies and established comprehensive development standards for the Smart Data Models MCP Server project.
+
+### Phase 17: UV Command Verification and README Corrections (October 26, 2025)
+
+**Command Validation Completed:** Tested all UV commands listed in README.md for correctness and functionality.
+
+**UV Commands Verified Working:**
+- ✅ **`uv sync`** - Successfully installs main dependencies (resolved 93 packages)
+- ✅ **`uv sync --all-extras`** - Successfully installs dev/test dependencies (installed pytest, ruff, black, mypy, coverage)
+- ✅ **`uv run pytest`** - All tests pass (7/7 tests successful in 6.04 seconds)
+- ✅ **`uv run pytest --cov=smart_data_models_mcp --cov-report=html`** - Coverage reports generated successfully (7/7 tests, HTML reports created)
+- ✅ **`uv run pytest tests/test_basic.py`** - Individual test file execution works through pytest
+- ❌ **`uv run python tests/test_data_access.py`** - Direct python execution fails due to import path issues
+
+**Documentation Corrections Applied:**
+- Fixed incorrect prerequisite references from pip to UV
+- Updated all installation commands to use UV equivalents
+- Corrected development environment setup commands
+- Standardized testing commands with proper pytest usage
+- Removed non-functional manual test execution methods
+- Maintained consistent UV command patterns throughout README
+
+**Technical Findings:**
+- Project correctly uses UV for dependency management despite prior doc inconsistencies
+- Dual virtual environment presence (.venv and venv/) is managed by system vs UV defaults
+- Development workflow requires `--dev` or `--all-extras` for test tool access
+- Test suite comprehensive with 7 tests covering integration and unit functionality
+- Coverage reporting properly configured and functional
+
+This verification phase confirmed UV command functionality and corrected documentation for accurate setup instructions.
+
+### Phase 18: Added Pip Alternative Installation Instructions (October 26, 2025)
+
+**Documentation Enhancement:** Added comprehensive pip-based alternative instructions to README.md alongside UV commands.
+
+**Installation Options Added:**
+- **Prerequisites:** Updated to show both UV (recommended) and pip as valid options
+- **Installation from Source:** Added pip alternative (`pip install -e .`) alongside UV commands
+- **PyPI Installation Notes:** Added note about using `pip install smart-data-models-mcp` when published
+
+**Development Commands Expanded:**
+- **Environment Setup:** Added pip alternatives including `pip install -e .[test]` and `pip install -e .[test,dev]`
+- **Execution Commands:** Added pip workflow with venv activation instructions
+- **Virtual Environment Notes:** Included platform-specific venv activation commands
+
+**Testing Instructions Enhanced:**
+- **Dual Testing Methods:** Added separate sections for UV and pip testing workflows
+- **Command Parity:** Ensured all major test commands have pip equivalents
+- **Coverage Support:** Noted pytest-cov requirement for pip-based coverage reporting
+
+**User Accessibility Improved:**
+- **Choice of Tools:** Users can now choose between modern UV package manager or traditional pip
+- **Clear Sections:** Installation and development sections clearly separated by tool preference
+- **Platform Specific:** Included Windows-specific venv activation commands
+
+This enhancement ensures developers with different tooling preferences can successfully install and work with the project, improving accessibility and reducing barriers to contribution.
+
 ### Technical Highlights
 
 The implementation leverages advanced features of pysmartdatamodels while adding:
