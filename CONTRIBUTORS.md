@@ -11,4 +11,5 @@ This project is developed and maintained by:
 
 ### AlainG Cline Bot
 - **Email**: [alaingclinebot@gmail.com](mailto:alaingclinebot@gmail.com)
+- **GitHub**: [@AlainGClineBot](https://github.com/AlainGClineBot)
 - **Role**: AI-assisted development and automation
