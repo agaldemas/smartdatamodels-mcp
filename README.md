@@ -602,4 +602,6 @@ Special thanks to our AI collaborators:
 
 ---
 
-![Cline Development Scene](img/cline-scenes_02.avif)
+<p align="center">
+  <img src="img/cline-scenes_02.avif" alt="Cline Development Scene" style="width: 50%;">
+</p>
