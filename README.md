@@ -598,4 +598,8 @@ MIT License - see LICENSE file for details.
 ## 🤖 AI Contributors
 
 Special thanks to our AI collaborators:
-- **Cline**: AI Assistant for code development, project structure, and automated testing (AlaingClinBot)
+- **Cline**: AI Assistant for code development, project structure, and automated testing (AlaingClineBot)
+
+---
+
+![Cline Development Scene](img/cline-scenes_02.avif)
