@@ -6,6 +6,7 @@ with FIWARE Smart Data Models, enabling AI agents to discover, search, and gener
 NGSI-LD compliant entities.
 """
 
+import argparse
 import asyncio
 import json
 import logging
@@ -16,11 +17,19 @@ from typing import Any, Dict, List, Optional, Union
 from urllib.parse import urlparse
 
 # Add the src directory to the path so we can import modules
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from . import data_access
-from . import model_generator
-from . import model_validator
+# Handle imports for both direct script execution and module imports
+try:
+    # Try relative imports first (when run as module)
+    from . import data_access
+    from . import model_generator
+    from . import model_validator
+except ImportError:
+    # Fall back to absolute imports (when run as script)
+    from smart_data_models_mcp import data_access
+    from smart_data_models_mcp import model_generator
+    from smart_data_models_mcp import model_validator
 
 from fastmcp import FastMCP
 from pydantic import BaseModel, Field
@@ -479,6 +488,23 @@ def run_combined_server(port: int = 8000):
 
 def main():
     """Main entry point for the MCP server."""
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description="Smart Data Models MCP Server")
+    parser.add_argument(
+        "--transport",
+        choices=["stdio", "sse", "http", "combined"],
+        default=os.getenv("MCP_TRANSPORT", "stdio"),
+        help="Transport mode: stdio (default), sse, http, or combined"
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=int(os.getenv("MCP_HTTP_PORT", "8000")),
+        help="Port for HTTP/SSE transport (default: 8000)"
+    )
+
+    args = parser.parse_args()
+
     # Configure file logging
     log_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'logs')
     os.makedirs(log_dir, exist_ok=True)
@@ -486,7 +512,7 @@ def main():
 
     file_handler = RotatingFileHandler(
         log_file,
-        maxBytes=10*1024*1024,  # 10MB
+        maxBytes=1024*1024,  # 1MB
         backupCount=5
     )
     file_handler.setLevel(logging.DEBUG)
@@ -499,14 +525,17 @@ def main():
     root_logger = logging.getLogger()
     root_logger.addHandler(file_handler)
 
-    # Detect transport mode from environment or CLI args
-    transport = os.getenv("MCP_TRANSPORT", "stdio")
-    
-    if transport == "http":
-        port = int(os.getenv("MCP_HTTP_PORT", "8000"))
+    # Handle transport modes
+    transport = args.transport.lower()
+    port = args.port
+
+    if transport in ["sse", "http"]:
+        logger.info(f"Starting Smart Data Models MCP Server with HTTP/SSE transport on port {port}")
+        logger.info(f"Logs will be written to: {log_file}")
         run_http_server(port)
     elif transport == "combined":
-        port = int(os.getenv("MCP_HTTP_PORT", "8000"))
+        logger.info(f"Starting Smart Data Models MCP Server with combined transport on port {port}")
+        logger.info(f"Logs will be written to: {log_file}")
         run_combined_server(port)
     else:  # stdio (default)
         logger.info("Starting Smart Data Models MCP Server with stdio transport")

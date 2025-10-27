@@ -141,8 +141,7 @@ To configure the smart-data-models-mcp server for use with Cline, add the follow
       "type": "stdio",
       "command": "python3",
       "args": [
-        "-m",
-        "smart_data_models_mcp.server"
+        "src/smart_data_models_mcp/server.py"
       ],
       "cwd": "/Users/alaingaldemas/Documents/mcp/smartdatamodels-mcp/src"
     }
@@ -162,7 +161,7 @@ If you prefer to use the server with Claude Desktop, add the following to your C
   "mcpServers": {
     "smart-data-models": {
       "command": "python",
-      "args": ["-m", "smart_data_models_mcp.server"],
+      "args": ["src/smart_data_models_mcp/server.py"],
       "cwd": "<path>//smartdatamodels-mcp",
       "env": {}
     }
@@ -196,10 +195,10 @@ To run the server in SSE mode on a specific port, use the following command:
 
 ```bash
 # Using UV (recommended)
-uv run python -m smart_data_models_mcp.server --transport sse --port 3200
+uv run python src/smart_data_models_mcp/server.py --transport sse --port 3200
 
 # Using pip
-python -m smart_data_models_mcp.server --transport sse --port 3200
+python src/smart_data_models_mcp/server.py --transport sse --port 3200
 ```
 
 **Available command-line options:**
@@ -211,16 +210,16 @@ python -m smart_data_models_mcp.server --transport sse --port 3200
 **Examples:**
 ```bash
 # Run in stdio mode (default)
-uv run python -m smart_data_models_mcp.server
+uv run python src/smart_data_models_mcp/server.py
 
 # Run in SSE mode on port 3200
-uv run python -m smart_data_models_mcp.server --transport sse --port 3200
+uv run python src/smart_data_models_mcp/server.py --transport sse --port 3200
 
 # Run in SSE mode on different host and port
-uv run python -m smart_data_models_mcp.server --transport sse --host 0.0.0.0 --port 8080
+uv run python src/smart_data_models_mcp/server.py --transport sse --host 0.0.0.0 --port 8080
 
 # Show help
-uv run python -m smart_data_models_mcp.server --help
+uv run python src/smart_data_models_mcp/server.py --help
 ```
 
 ### Installation Steps
@@ -445,10 +444,10 @@ pip install -e .[test,dev]  # Assuming equivalent optional dependencies are conf
 uv run pytest
 
 # Run with debugging (stdio mode)
-python -m smart_data_models_mcp.server --transport stdio
+uv run python src/smart_data_models_mcp/server.py --transport stdio
 
 # Run with debugging (SSE mode)
-python -m smart_data_models_mcp.server --transport sse --port 3200
+uv run python src/smart_data_models_mcp/server.py --transport sse --port 3200
 ```
 
 **Development Commands (pip alternative):**
@@ -460,10 +459,10 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 pytest
 
 # Run with debugging (stdio mode)
-python -m smart_data_models_mcp.server --transport stdio
+python src/smart_data_models_mcp/server.py --transport stdio
 
 # Run with debugging (SSE mode)
-python -m smart_data_models_mcp.server --transport sse --port 3200
+python src/smart_data_models_mcp/server.py --transport sse --port 3200
 ```
 
 ### Architecture

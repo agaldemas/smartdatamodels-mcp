@@ -14,7 +14,7 @@ from urllib.parse import urljoin
 
 import requests
 from dotenv import load_dotenv
-from .github_repo_analyzer import EmbeddedGitHubAnalyzer
+from smart_data_models_mcp.github_repo_analyzer import EmbeddedGitHubAnalyzer
 
 try:
     import pysmartdatamodels as psdm
@@ -167,27 +167,15 @@ class SmartDataModelsAPI:
         return self.KNOWN_DOMAINS
 
     async def list_subjects(self) -> List[str]:
-        """List all available subjects."""
-        logger.info("List Subjects: Starting - trying pysmartdatamodels then fallback to GitHub API")
+        """List all available subjects using GitHub API."""
+        logger.info("List Subjects: Starting - using GitHub API")
         cache_key = "subjects"
         cached = self._cache.get(cache_key)
         if cached:
             logger.debug("List Subjects: Returning cached data")
             return cached
 
-        # Try pysmartdatamodels first
-        if psdm:
-            try:
-                logger.debug("List Subjects: Attempting pysmartdatamodels.list_all_subjects()")
-                subjects = await self._run_sync_in_thread(psdm.list_all_subjects)
-                logger.info("List Subjects: Success with pysmartdatamodels - {} subjects found", len(subjects) if subjects else 0)
-                self._cache.set(cache_key, subjects)
-                return subjects
-            except (AttributeError, Exception) as e:
-                logger.warning(f"pysmartdatamodels list_all_subjects failed: {e}")
-                logger.info("List Subjects: pysmartdatamodels failed, trying GitHub API")
-
-        # Fallback: Get subjects from GitHub API
+        # Get subjects from GitHub API
         try:
             subjects = []
             domains = await self.list_domains()  # Get all domains
@@ -211,7 +199,7 @@ class SmartDataModelsAPI:
             return subjects
 
         except Exception as e:
-            logger.error(f"GitHub API fallback also failed: {e}")
+            logger.error(f"GitHub API failed: {e}")
             # Return empty list as ultimate fallback
             return []
 
@@ -764,8 +752,15 @@ class SmartDataModelsAPI:
 
         # Fallback 2: Try pysmartdatamodels as final fallback
         try:
+            # Import the functions directly
+            from pysmartdatamodels import (
+                attributes_datamodel, description_attribute, datatype_attribute,
+                ngsi_datatype_attribute, units_attribute, model_attribute,
+                list_datamodel_metadata
+            )
+
             # Get attributes list for this model
-            attributes_list = await self._run_sync_in_thread(psdm.attributes_datamodel, subject, model)
+            attributes_list = await self._run_sync_in_thread(attributes_datamodel, subject, model)
 
             if attributes_list and isinstance(attributes_list, list):
                 attributes = []
@@ -774,11 +769,11 @@ class SmartDataModelsAPI:
                 for attr_name in attributes_list[:50]:  # Limit to avoid too many calls
                     try:
                         # Get description, data type, and NGSI type for each attribute
-                        attr_desc = await self._run_sync_in_thread(psdm.description_attribute, subject, model, attr_name)
-                        attr_type = await self._run_sync_in_thread(psdm.datatype_attribute, subject, model, attr_name)
-                        ngsi_type = await self._run_sync_in_thread(psdm.ngsi_datatype_attribute, subject, model, attr_name)
-                        attr_units = await self._run_sync_in_thread(psdm.units_attribute, subject, model, attr_name)
-                        attr_model = await self._run_sync_in_thread(psdm.model_attribute, subject, model, attr_name)
+                        attr_desc = await self._run_sync_in_thread(description_attribute, subject, model, attr_name)
+                        attr_type = await self._run_sync_in_thread(datatype_attribute, subject, model, attr_name)
+                        ngsi_type = await self._run_sync_in_thread(ngsi_datatype_attribute, subject, model, attr_name)
+                        attr_units = await self._run_sync_in_thread(units_attribute, subject, model, attr_name)
+                        attr_model = await self._run_sync_in_thread(model_attribute, subject, model, attr_name)
 
                         attribute_info = {
                             "name": attr_name,
@@ -805,7 +800,7 @@ class SmartDataModelsAPI:
                         })
 
                 # Try to get metadata for the model
-                metadata = await self._run_sync_in_thread(psdm.list_datamodel_metadata, model, subject)
+                metadata = await self._run_sync_in_thread(list_datamodel_metadata, model, subject)
                 if metadata and isinstance(metadata, dict):
                     # Extract information from metadata
                     processed_details = {
@@ -934,8 +929,9 @@ class SmartDataModelsAPI:
         if cached:
             return cached
 
-        # Get from GitHub
+        # Get from GitHub - strip 'dataModel.' prefix if present for repo name construction
         actual_repo_subject = repo_subject if repo_subject else subject
+        actual_repo_subject = actual_repo_subject.replace('dataModel.', '') if actual_repo_subject.startswith('dataModel.') else actual_repo_subject
         repo_name = f"dataModel.{actual_repo_subject}"
         schema_url = f"{self.GITHUB_RAW_BASE}/{self.SMART_DATA_MODELS_ORG}/{repo_name}/master/{model}/schema.json"
         try:
@@ -1116,8 +1112,9 @@ class SmartDataModelsAPI:
         if cached:
             return cached
 
-        # Try to get from GitHub
-        repo_name = f"dataModel.{subject}"
+        # Try to get from GitHub - strip 'dataModel.' prefix if present for repo name construction
+        actual_subject = subject.replace('dataModel.', '') if subject.startswith('dataModel.') else subject
+        repo_name = f"dataModel.{actual_subject}"
         context_url = f"{self.GITHUB_RAW_BASE}/{self.SMART_DATA_MODELS_ORG}/{repo_name}/master/context.jsonld"
         try:
             response = await self._run_sync_in_thread(
