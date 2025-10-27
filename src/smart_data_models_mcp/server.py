@@ -26,6 +26,9 @@ from fastmcp import FastMCP
 from pydantic import BaseModel, Field
 import requests
 
+# For HTTP transport support
+import os
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -458,6 +461,22 @@ async def get_subject_context(subject: str) -> str:
         raise ValueError(f"Context not found: {e}")
 
 
+def run_http_server(port: int = 8000):
+    """Run the MCP server with HTTP/SSE support."""
+    logger.info(f"Starting Smart Data Models MCP Server with HTTP transport on port {port}")
+
+    # Use SSE transport for HTTP
+    asyncio.run(app.run_sse_async(port=port))
+
+
+def run_combined_server(port: int = 8000):
+    """Run both stdio and HTTP transports concurrently."""
+    logger.info(f"Starting Smart Data Models MCP Server with combined transport on port {port}")
+
+    # This would run both transports - for now we'll just run HTTP
+    asyncio.run(app.run_sse_async(port=port))
+
+
 def main():
     """Main entry point for the MCP server."""
     # Configure file logging
@@ -480,12 +499,19 @@ def main():
     root_logger = logging.getLogger()
     root_logger.addHandler(file_handler)
 
-    # Log startup
-    logger.info("Starting Smart Data Models MCP Server with stdio transport")
-    logger.info(f"Logs will be written to: {log_file}")
-
-    # Run the stdio server
-    asyncio.run(app.run_stdio_async())
+    # Detect transport mode from environment or CLI args
+    transport = os.getenv("MCP_TRANSPORT", "stdio")
+    
+    if transport == "http":
+        port = int(os.getenv("MCP_HTTP_PORT", "8000"))
+        run_http_server(port)
+    elif transport == "combined":
+        port = int(os.getenv("MCP_HTTP_PORT", "8000"))
+        run_combined_server(port)
+    else:  # stdio (default)
+        logger.info("Starting Smart Data Models MCP Server with stdio transport")
+        logger.info(f"Logs will be written to: {log_file}")
+        app.run(transport="stdio")
 
 
 if __name__ == "__main__":

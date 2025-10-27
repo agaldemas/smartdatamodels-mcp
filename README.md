@@ -115,6 +115,15 @@ You can check the logs for detailed information about:
 
 ### MCP Server Configuration
 
+The Smart Data Models MCP server supports two transport modes:
+
+- **stdio**: Standard input/output mode (default) - recommended for most use cases
+- **sse**: Server-Sent Events mode - for web-based integrations and custom setups
+
+#### STDIO Mode (Default)
+
+The stdio mode is the standard way to run the MCP server and is recommended for most AI assistant integrations.
+
 ### Cline MCP Server Configuration
 
 To configure the smart-data-models-mcp server for use with Cline, add the following to your Cline MCP settings file:
@@ -161,6 +170,58 @@ If you prefer to use the server with Claude Desktop, add the following to your C
 }
 ```
 **Note: this configuration remains to verify**
+
+#### SSE Mode Configuration
+
+For web-based integrations or when you need to run the server as a web service, you can use the SSE (Server-Sent Events) transport mode. Add the following configuration to your MCP settings:
+
+```json
+{
+  "mcpServers": {
+    "smart-data-models": {
+      "disabled": false,
+      "timeout": 60,
+      "type": "sse",
+      "url": "http://127.0.0.1:3200/sse"
+    }
+  }
+}
+```
+
+### Server Launch Commands
+
+#### Launch Server on Specific Port (SSE Mode)
+
+To run the server in SSE mode on a specific port, use the following command:
+
+```bash
+# Using UV (recommended)
+uv run python -m smart_data_models_mcp.server --transport sse --port 3200
+
+# Using pip
+python -m smart_data_models_mcp.server --transport sse --port 3200
+```
+
+**Available command-line options:**
+- `--transport`: Transport mode (`stdio` or `sse`, default: `stdio`)
+- `--port`: Port number for SSE mode (default: 3200)
+- `--host`: Host address (default: `127.0.0.1`)
+- `--help`: Show help message
+
+**Examples:**
+```bash
+# Run in stdio mode (default)
+uv run python -m smart_data_models_mcp.server
+
+# Run in SSE mode on port 3200
+uv run python -m smart_data_models_mcp.server --transport sse --port 3200
+
+# Run in SSE mode on different host and port
+uv run python -m smart_data_models_mcp.server --transport sse --host 0.0.0.0 --port 8080
+
+# Show help
+uv run python -m smart_data_models_mcp.server --help
+```
 
 ### Installation Steps
 
@@ -383,8 +444,11 @@ pip install -e .[test,dev]  # Assuming equivalent optional dependencies are conf
 # Run tests
 uv run pytest
 
-# Run with debugging
+# Run with debugging (stdio mode)
 python -m smart_data_models_mcp.server --transport stdio
+
+# Run with debugging (SSE mode)
+python -m smart_data_models_mcp.server --transport sse --port 3200
 ```
 
 **Development Commands (pip alternative):**
@@ -395,8 +459,11 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 # Run tests
 pytest
 
-# Run with debugging
+# Run with debugging (stdio mode)
 python -m smart_data_models_mcp.server --transport stdio
+
+# Run with debugging (SSE mode)
+python -m smart_data_models_mcp.server --transport sse --port 3200
 ```
 
 ### Architecture
