@@ -113,6 +113,42 @@ You can check the logs for detailed information about:
 - Caching behavior
 - Error conditions and troubleshooting details
 
+### Server Launch Commands
+
+#### Launch Server on Specific Port (SSE Mode)
+
+To run the server in SSE mode on a specific port, use the following command:
+
+```bash
+# Using UV (recommended)
+uv run python src/smart_data_models_mcp/server.py --transport sse --port 3200
+
+# Using pip
+python src/smart_data_models_mcp/server.py --transport sse --port 3200
+```
+
+**Available command-line options:**
+- `--transport`: Transport mode (`stdio` or `sse`, default: `stdio`)
+- `--port`: Port number for SSE mode (default: 3200)
+- `--host`: Host address (default: `127.0.0.1`)
+- `--help`: Show help message
+
+**Examples:**
+```bash
+# Run in stdio mode (default)
+uv run python src/smart_data_models_mcp/server.py
+
+# Run in SSE mode on port 3200
+uv run python src/smart_data_models_mcp/server.py --transport sse --port 3200
+
+# Run in SSE mode on different host and port
+uv run python src/smart_data_models_mcp/server.py --transport sse --host 0.0.0.0 --port 8080
+
+# Show help
+uv run python src/smart_data_models_mcp/server.py --help
+```
+
+
 ### MCP Server Configuration
 
 The Smart Data Models MCP server supports two transport modes:
@@ -186,41 +222,15 @@ For web-based integrations or when you need to run the server as a web service, 
   }
 }
 ```
+#### local n8n usage configuration
+this mcp server can also be used with n8n through an mcp client node
+the Endpoint should be:
+   - `http://localhost:3200/sse`
+   - `http://host.docker.internal:3200/sse` if the n8n is under docker
 
-### Server Launch Commands
+- choose `sse`as Server Transport
 
-#### Launch Server on Specific Port (SSE Mode)
 
-To run the server in SSE mode on a specific port, use the following command:
-
-```bash
-# Using UV (recommended)
-uv run python src/smart_data_models_mcp/server.py --transport sse --port 3200
-
-# Using pip
-python src/smart_data_models_mcp/server.py --transport sse --port 3200
-```
-
-**Available command-line options:**
-- `--transport`: Transport mode (`stdio` or `sse`, default: `stdio`)
-- `--port`: Port number for SSE mode (default: 3200)
-- `--host`: Host address (default: `127.0.0.1`)
-- `--help`: Show help message
-
-**Examples:**
-```bash
-# Run in stdio mode (default)
-uv run python src/smart_data_models_mcp/server.py
-
-# Run in SSE mode on port 3200
-uv run python src/smart_data_models_mcp/server.py --transport sse --port 3200
-
-# Run in SSE mode on different host and port
-uv run python src/smart_data_models_mcp/server.py --transport sse --host 0.0.0.0 --port 8080
-
-# Show help
-uv run python src/smart_data_models_mcp/server.py --help
-```
 
 ### Installation Steps
 
