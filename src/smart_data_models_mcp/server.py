@@ -13,8 +13,10 @@ import logging
 import os
 import sys
 from logging.handlers import RotatingFileHandler
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Union
 from urllib.parse import urlparse
+import inspect
+from fastmcp.server.middleware import MiddlewareContext
 
 # Add the src directory to the path so we can import modules
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
@@ -32,11 +34,7 @@ except ImportError:
     from smart_data_models_mcp import model_validator
 
 from fastmcp import FastMCP
-from pydantic import BaseModel, Field
-import requests
-
-# For HTTP transport support
-import os
+from pydantic import Field
 
 # Configure logging
 logging.basicConfig(
@@ -48,7 +46,7 @@ logger = logging.getLogger(__name__)
 # Initialize the FastMCP server
 app = FastMCP(
     name="smart-data-models-mcp",
-    instructions="MCP server for FIWARE Smart Data Models - enabling AI agents to work with NGSI (V2 or LD) entities"
+    instructions="MCP server for FIWARE Smart Data Models - enabling AI agents to work with NGSI (V2 or LD) entities",
 )
 
 # Global instances for data access and utilities
@@ -57,48 +55,16 @@ ngsi_generator = model_generator.NGSILDGenerator()
 schema_validator = model_validator.SchemaValidator()
 
 
-# Pydantic models for tool parameters
-class SearchModelsParams(BaseModel):
-    """Parameters for searching data models."""
-    query: str = Field(..., description="Search query (model name, attributes, or keywords)")
-    subject: Optional[str] = Field(None, description="Limit search to specific subject (e.g., 'dataModel.User')")
-    include_attributes: bool = Field(False, description="Include attribute details in results")
-
-
-class SubjectModelsParams(BaseModel):
-    """Parameters for listing models in a subject."""
-    subject: Optional[str] = Field(None, description="Subject name (e.g., 'dataModel.User', 'dataModel.Energy')")
-
-
-class ModelDetailsParams(BaseModel):
-    """Parameters for getting model details."""
-    subject: Optional[str] = Field(None, description="Subject name (e.g., 'dataModel.User')")
-    model: str = Field(..., description="Model name")
-
-
-class ValidateDataParams(BaseModel):
-    """Parameters for validating data against a model."""
-    subject: Optional[str] = Field(None, description="Subject name (e.g., 'dataModel.User')")
-    model: str = Field(..., description="Model name")
-    data: Union[str, Dict[str, Any]] = Field(..., description="Data to validate (JSON string or dict)")
-
-
-class GenerateNGSILDParams(BaseModel):
-    """Parameters for generating NGSI-LD from JSON."""
-    data: Union[str, Dict[str, Any]] = Field(..., description="Input data (JSON string or dict)")
-    entity_type: Optional[str] = Field(None, description="NGSI-LD entity type")
-    entity_id: Optional[str] = Field(None, description="NGSI-LD entity ID")
-    context: Optional[str] = Field(None, description="Context URL")
-
-
-class SuggestModelsParams(BaseModel):
-    """Parameters for suggesting matching models."""
-    data: Union[str, Dict[str, Any]] = Field(..., description="Data to analyze (JSON string or dict)")
-
-
-class DomainSubjectsParams(BaseModel):
-    """Parameters for listing subjects in a domain."""
-    domain: str = Field(..., description="The name of the domain to get subjects for")
+async def initialize_data():
+    """Pre-cache essential data on server startup."""
+    logger.info("Server startup: Initializing data cache...")
+    try:
+        # Pre-cache domains and subjects
+        domains = await data_api.list_domains()
+        subjects = await data_api.list_subjects()
+        logger.info(f"Server startup: Data cache initialized successfully with {len(domains)} domains and {len(subjects)} subjects.")
+    except Exception as e:
+        logger.error(f"Server startup: Failed to initialize data cache: {e}")
 
 
 # Tool definitions
@@ -106,7 +72,8 @@ class DomainSubjectsParams(BaseModel):
 async def search_data_models(
     query: str = Field(..., description="The search query (model name, attributes, or keywords)"),
     subject: Optional[str] = Field(None, description="Limits the search to a specific subject (e.g., 'dataModel.User')"),
-    include_attributes: bool = Field(False, description="Whether to include attribute details in the results")
+    include_attributes: bool = Field(False, description="Whether to include attribute details in the results"),
+    toolCallId: Optional[str] = Field(None, description="The ID of the tool call")
 ) -> str:
     """Search for data models across subjects by name, attributes, or keywords.
 
@@ -137,7 +104,9 @@ async def search_data_models(
 
 
 @app.tool()
-async def list_domains() -> str:
+async def list_domains(
+    toolCallId: Optional[str] = Field(None, description="The ID of the tool call")
+) -> str:
     """List all available Smart Data Model domains.
 
     Returns:
@@ -161,7 +130,9 @@ async def list_domains() -> str:
 
 
 @app.tool()
-async def list_subjects() -> str:
+async def list_subjects(
+    toolCallId: Optional[str] = Field(None, description="The ID of the tool call")
+) -> str:
     """List all available Smart Data Model subjects.
 
     Returns:
@@ -186,7 +157,8 @@ async def list_subjects() -> str:
 
 @app.tool()
 async def list_models_in_subject(
-    subject: Optional[str] = Field(None, description="The name of the subject (e.g., 'dataModel.SmartCities', 'dataModel.Energy')")
+    subject: Optional[str] = Field(None, description="The name of the subject (e.g., 'dataModel.SmartCities', 'dataModel.Energy')"),
+    toolCallId: Optional[str] = Field(None, description="The ID of the tool call")
 ) -> str:
     """List all data models within a specific subject.
 
@@ -218,7 +190,8 @@ async def list_models_in_subject(
 @app.tool()
 async def get_model_details(
     model: str = Field(..., description="The name of the model"),
-    subject: Optional[str] = Field(None, description="The name of the subject (e.g., 'dataModel.User')")
+    subject: Optional[str] = Field(None, description="The name of the subject (e.g., 'dataModel.User')"),
+    toolCallId: Optional[str] = Field(None, description="The ID of the tool call")
 ) -> str:
     """Get detailed information about a specific data model.
 
@@ -253,7 +226,8 @@ async def get_model_details(
 async def validate_against_model(
     model: str = Field(..., description="The name of the model"),
     data: Union[str, Dict[str, Any]] = Field(..., description="The data to validate (can be a JSON string or a dictionary)"),
-    subject: Optional[str] = Field(None, description="The name of the subject (e.g., 'dataModel.User')")
+    subject: Optional[str] = Field(None, description="The name of the subject (e.g., 'dataModel.User')"),
+    toolCallId: Optional[str] = Field(None, description="The ID of the tool call")
 ) -> str:
     """Validate data against a Smart Data Model schema.
 
@@ -303,7 +277,8 @@ async def generate_ngsi_ld_from_json(
     data: Union[str, Dict[str, Any]] = Field(..., description="The input data (can be a JSON string or a dictionary)"),
     entity_type: Optional[str] = Field(None, description="The NGSI-LD entity type"),
     entity_id: Optional[str] = Field(None, description="The NGSI-LD entity ID"),
-    context: Optional[str] = Field(None, description="The Context URL for the NGSI-LD entity")
+    context: Optional[str] = Field(None, description="The Context URL for the NGSI-LD entity"),
+    toolCallId: Optional[str] = Field(None, description="The ID of the tool call")
 ) -> str:
     """Generate NGSI-LD compliant entities from arbitrary JSON data.
 
@@ -345,7 +320,8 @@ async def generate_ngsi_ld_from_json(
 
 @app.tool()
 async def suggest_matching_models(
-    data: Union[str, Dict[str, Any]] = Field(..., description="The data to analyze (can be a JSON string or a dictionary)")
+    data: Union[str, Dict[str, Any]] = Field(..., description="The data to analyze (can be a JSON string or a dictionary)"),
+    toolCallId: Optional[str] = Field(None, description="The ID of the tool call")
 ) -> str:
     """Suggest Smart Data Models that match provided data structure.
 
@@ -384,7 +360,8 @@ async def suggest_matching_models(
 
 @app.tool()
 async def list_domain_subjects(
-    domain: str = Field(..., description="The name of the domain to get subjects for")
+    domain: str = Field(..., description="The name of the domain to get subjects for"),
+    toolCallId: Optional[str] = Field(None, description="The ID of the tool call")
 ) -> str:
     """List all subjects belonging to a specific domain.
 
@@ -524,6 +501,11 @@ def main():
     # Add handler to root logger to catch all logs
     root_logger = logging.getLogger()
     root_logger.addHandler(file_handler)
+
+    # Initialize data before starting the server
+    logger.info("Initializing data before starting server...")
+    asyncio.run(initialize_data())
+    logger.info("Data initialization complete.")
 
     # Handle transport modes
     transport = args.transport.lower()

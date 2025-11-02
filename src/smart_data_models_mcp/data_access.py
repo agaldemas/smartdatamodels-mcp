@@ -131,33 +131,46 @@ class SmartDataModelsAPI:
         """List all available domains."""
         logger.info("List Domains: Starting - using GitHub API to fetch domain list")
         cache_key = "domains"
-        cached = self._cache.get(cache_key)
-        if cached:
-            logger.debug("List Domains: Returning cached data")
-            return cached
+        # Force fresh fetch - skip cache entirely for debugging
 
-        # Fetch domains from GitHub organization repositories
+        # Fetch domains from GitHub organization repositories with pagination
         try:
-            # GitHub API endpoint for organization repositories
-            org_repos_url = f"https://api.github.com/orgs/{self.SMART_DATA_MODELS_ORG}/repos"
-            response = await self._run_sync_in_thread(
-                self._session.get, org_repos_url, timeout=30
-            )
+            domains = []
+            page = 1
 
-            if response.status_code == 200:
-                repos_data = response.json()
-                domains = []
-                for repo in repos_data:
-                    repo_name = repo.get("name", "")
-                    # Filter repositories that do NOT start with "dataModel."
-                    if repo_name and not repo_name.startswith("dataModel."):
-                        domains.append(repo_name)
+            while True:
+                # GitHub API endpoint for organization repositories with pagination
+                org_repos_url = f"https://api.github.com/orgs/{self.SMART_DATA_MODELS_ORG}/repos?page={page}&per_page=100"
+                response = await self._run_sync_in_thread(
+                    self._session.get, org_repos_url, timeout=30
+                )
 
-                domains.sort()  # Sort for consistent ordering
-                self._cache.set(cache_key, domains)
-                return domains
-            else:
-                logger.error(f"GitHub API returned status {response.status_code} for {org_repos_url}")
+                if response.status_code == 200:
+                    repos_data = response.json()
+
+                    # If no more repos, break
+                    if not repos_data:
+                        break
+
+                    for repo in repos_data:
+                        repo_name = repo.get("name", "")
+                        # Filter repositories that do NOT start with "dataModel."
+                        if repo_name and not repo_name.startswith("dataModel."):
+                            domains.append(repo_name)
+
+                    # Check if there are more pages (if we got a full page, there might be more)
+                    if len(repos_data) < 100:
+                        break
+
+                    page += 1  # Go to next page
+                else:
+                    logger.error(f"GitHub API returned status {response.status_code} for {org_repos_url}")
+                    break
+
+            domains.sort()  # Sort for consistent ordering
+            logger.info(f"List Domains: Retrieved {len(domains)} domains total from {page} pages")
+            self._cache.set(cache_key, domains)
+            return domains
 
         except Exception as e:
             logger.error(f"Failed to fetch domains from GitHub API: {e}")
