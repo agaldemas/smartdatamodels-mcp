@@ -21,7 +21,7 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 dependencies = [
-    "fastmcp>=0.4.0",
+    "fastmcp>=2.13.0",
     "pysmartdatamodels>=0.5.0",
     "requests>=2.28.0",
     "jsonschema>=4.17.0",

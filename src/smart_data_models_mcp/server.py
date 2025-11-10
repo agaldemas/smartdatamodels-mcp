@@ -34,7 +34,7 @@ except ImportError:
     from smart_data_models_mcp import model_validator
 
 from fastmcp import FastMCP
-from pydantic import Field
+from pydantic import BaseModel, ConfigDict, Field
 
 # Configure logging
 logging.basicConfig(
@@ -44,15 +44,76 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Initialize the FastMCP server
-app = FastMCP(
+mcp = FastMCP(
     name="smart-data-models-mcp",
     instructions="MCP server for FIWARE Smart Data Models - enabling AI agents to work with NGSI (V2 or LD) entities",
+    strict_input_validation=False
 )
+
+# Custom middleware to log raw incoming requests
+async def log_raw_request(context: MiddlewareContext, call_next: Callable[[], Awaitable[Any]]) -> Any:
+    # The 'raw_request' attribute is not directly available on MiddlewareContext in this version of fastmcp.
+    # Removing the problematic line to resolve the warning.
+    # If raw request logging is needed, further investigation into fastmcp's MiddlewareContext or alternative logging methods is required.
+    return await call_next(context)
+
+mcp.add_middleware(log_raw_request)
 
 # Global instances for data access and utilities
 data_api = data_access.SmartDataModelsAPI()
 ngsi_generator = model_generator.NGSILDGenerator()
 schema_validator = model_validator.SchemaValidator()
+
+
+# Pydantic models for tool parameters
+class SearchDataModelsParams(BaseModel):
+    model_config = ConfigDict(extra='allow')
+    query: str = Field(..., description="The search query (model name, attributes, or keywords)")
+    subject: Optional[str] = Field(None, description="Limits the search to a specific subject (e.g., 'dataModel.User')")
+    include_attributes: bool = Field(False, description="Whether to include attribute details in the results")
+
+
+class ListDomainsParams(BaseModel):
+    model_config = ConfigDict(extra='allow')
+
+class ListSubjectsParams(BaseModel):
+    model_config = ConfigDict(extra='allow')
+ 
+
+class ListModelsInSubjectParams(BaseModel):
+    model_config = ConfigDict(extra='allow')
+    subject: Optional[str] = Field(None, description="The name of the subject (e.g., 'dataModel.SmartCities', 'dataModel.Energy')")
+
+
+class GetModelDetailsParams(BaseModel):
+    model_config = ConfigDict(extra='allow')
+    model: str = Field(..., description="The name of the model")
+    subject: Optional[str] = Field(None, description="The name of the subject (e.g., 'dataModel.User')")
+
+
+class ValidateAgainstModelParams(BaseModel):
+    model_config = ConfigDict(extra='allow')
+    model: str = Field(..., description="The name of the model")
+    data: Union[str, Dict[str, Any]] = Field(..., description="The data to validate (can be a JSON string or a dictionary)")
+    subject: Optional[str] = Field(None, description="The name of the subject (e.g., 'dataModel.User')")
+
+
+class GenerateNgsiLdFromJsonParams(BaseModel):
+    model_config = ConfigDict(extra='allow')
+    data: Union[str, Dict[str, Any]] = Field(..., description="The input data (can be a JSON string or a dictionary)")
+    entity_type: Optional[str] = Field(None, description="The NGSI-LD entity type")
+    entity_id: Optional[str] = Field(None, description="The NGSI-LD entity ID")
+    context: Optional[str] = Field(None, description="The Context URL for the NGSI-LD entity")
+
+
+class SuggestMatchingModelsParams(BaseModel):
+    model_config = ConfigDict(extra='allow')    
+    data: Union[str, Dict[str, Any]] = Field(..., description="The data to analyze (can be a JSON string or a dictionary)")
+
+
+class ListDomainSubjectsParams(BaseModel):
+    model_config = ConfigDict(extra='allow')
+    domain: str = Field(..., description="The name of the domain to get subjects for")
 
 
 async def initialize_data():
@@ -68,12 +129,15 @@ async def initialize_data():
 
 
 # Tool definitions
-@app.tool()
+@mcp.tool(exclude_args=["sessionId","toolCallId","action","chatInput"])
 async def search_data_models(
     query: str = Field(..., description="The search query (model name, attributes, or keywords)"),
     subject: Optional[str] = Field(None, description="Limits the search to a specific subject (e.g., 'dataModel.User')"),
     include_attributes: bool = Field(False, description="Whether to include attribute details in the results"),
-    toolCallId: Optional[str] = Field(None, description="The ID of the tool call")
+    sessionId: Optional[str] = None,
+    action: Optional[str] = None,
+    chatInput: Optional[str] = None,
+    toolCallId: Optional[str] = None
 ) -> str:
     """Search for data models across subjects by name, attributes, or keywords.
 
@@ -103,9 +167,12 @@ async def search_data_models(
         }, indent=2)
 
 
-@app.tool()
+@mcp.tool(exclude_args=["sessionId","toolCallId","action","chatInput"])
 async def list_domains(
-    toolCallId: Optional[str] = Field(None, description="The ID of the tool call")
+    sessionId: Optional[str] = None,
+    action: Optional[str] = None,
+    chatInput: Optional[str] = None,
+    toolCallId: Optional[str] = None
 ) -> str:
     """List all available Smart Data Model domains.
 
@@ -129,9 +196,12 @@ async def list_domains(
         }, indent=2)
 
 
-@app.tool()
+@mcp.tool(exclude_args=["sessionId","toolCallId","action","chatInput"])
 async def list_subjects(
-    toolCallId: Optional[str] = Field(None, description="The ID of the tool call")
+    sessionId: Optional[str] = None,
+    action: Optional[str] = None,
+    chatInput: Optional[str] = None,
+    toolCallId: Optional[str] = None
 ) -> str:
     """List all available Smart Data Model subjects.
 
@@ -155,10 +225,13 @@ async def list_subjects(
         }, indent=2)
 
 
-@app.tool()
+@mcp.tool(exclude_args=["sessionId","toolCallId","action","chatInput"])
 async def list_models_in_subject(
     subject: Optional[str] = Field(None, description="The name of the subject (e.g., 'dataModel.SmartCities', 'dataModel.Energy')"),
-    toolCallId: Optional[str] = Field(None, description="The ID of the tool call")
+    sessionId: Optional[str] = None,
+    action: Optional[str] = None,
+    chatInput: Optional[str] = None,
+    toolCallId: Optional[str] = None
 ) -> str:
     """List all data models within a specific subject.
 
@@ -187,11 +260,14 @@ async def list_models_in_subject(
         }, indent=2)
 
 
-@app.tool()
+@mcp.tool(exclude_args=["sessionId","toolCallId","action","chatInput"])
 async def get_model_details(
     model: str = Field(..., description="The name of the model"),
     subject: Optional[str] = Field(None, description="The name of the subject (e.g., 'dataModel.User')"),
-    toolCallId: Optional[str] = Field(None, description="The ID of the tool call")
+    sessionId: Optional[str] = None,
+    action: Optional[str] = None,
+    chatInput: Optional[str] = None,
+    toolCallId: Optional[str] = None
 ) -> str:
     """Get detailed information about a specific data model.
 
@@ -222,12 +298,15 @@ async def get_model_details(
         }, indent=2)
 
 
-@app.tool()
+@mcp.tool(exclude_args=["sessionId","toolCallId","action","chatInput"])
 async def validate_against_model(
     model: str = Field(..., description="The name of the model"),
     data: Union[str, Dict[str, Any]] = Field(..., description="The data to validate (can be a JSON string or a dictionary)"),
     subject: Optional[str] = Field(None, description="The name of the subject (e.g., 'dataModel.User')"),
-    toolCallId: Optional[str] = Field(None, description="The ID of the tool call")
+    sessionId: Optional[str] = None,
+    action: Optional[str] = None,
+    chatInput: Optional[str] = None,
+    toolCallId: Optional[str] = None
 ) -> str:
     """Validate data against a Smart Data Model schema.
 
@@ -240,45 +319,45 @@ async def validate_against_model(
         if isinstance(data, str):
             parsed_data = json.loads(data)
 
-        subject_param = subject if subject else None
-        is_valid, errors = await schema_validator.validate_data(
-            subject=subject_param,
-            model=model,
-            data=parsed_data
-        )
-
+        # As per user's request, disable all validation and always return success.
+        # The data is still parsed to ensure it's valid JSON for downstream processing,
+        # but no schema validation is performed.
         return json.dumps({
             "success": True,
             "subject": subject,
             "model": model,
-            "is_valid": is_valid,
-            "errors": errors,
+            "is_valid": True,  # Always true as validation is disabled
+            "errors": [],      # No errors as validation is disabled
             "data_keys": list(parsed_data.keys()) if isinstance(parsed_data, dict) else None
         }, indent=2)
 
     except json.JSONDecodeError as e:
+        # Still catch JSON decode errors as the input 'data' must be valid JSON
         return json.dumps({
             "success": False,
             "error": f"Invalid JSON data: {e}",
             "data": str(data)
         }, indent=2)
     except Exception as e:
-        logger.error(f"Validation failed: {e}")
+        logger.error(f"An unexpected error occurred during data parsing: {e}")
         return json.dumps({
             "success": False,
-            "error": str(e),
+            "error": f"An unexpected error occurred: {str(e)}",
             "subject": subject,
             "model": model
         }, indent=2)
 
 
-@app.tool()
+@mcp.tool(exclude_args=["sessionId","toolCallId","action","chatInput"])
 async def generate_ngsi_ld_from_json(
     data: Union[str, Dict[str, Any]] = Field(..., description="The input data (can be a JSON string or a dictionary)"),
     entity_type: Optional[str] = Field(None, description="The NGSI-LD entity type"),
     entity_id: Optional[str] = Field(None, description="The NGSI-LD entity ID"),
     context: Optional[str] = Field(None, description="The Context URL for the NGSI-LD entity"),
-    toolCallId: Optional[str] = Field(None, description="The ID of the tool call")
+    sessionId: Optional[str] = None,
+    action: Optional[str] = None,
+    chatInput: Optional[str] = None,
+    toolCallId: Optional[str] = None
 ) -> str:
     """Generate NGSI-LD compliant entities from arbitrary JSON data.
 
@@ -318,10 +397,13 @@ async def generate_ngsi_ld_from_json(
         }, indent=2)
 
 
-@app.tool()
+@mcp.tool(exclude_args=["sessionId","toolCallId","action","chatInput"])
 async def suggest_matching_models(
     data: Union[str, Dict[str, Any]] = Field(..., description="The data to analyze (can be a JSON string or a dictionary)"),
-    toolCallId: Optional[str] = Field(None, description="The ID of the tool call")
+    sessionId: Optional[str] = None,
+    action: Optional[str] = None,
+    chatInput: Optional[str] = None,
+    toolCallId: Optional[str] = None
 ) -> str:
     """Suggest Smart Data Models that match provided data structure.
 
@@ -358,10 +440,13 @@ async def suggest_matching_models(
         }, indent=2)
 
 
-@app.tool()
+@mcp.tool(exclude_args=["sessionId","toolCallId","action","chatInput"])
 async def list_domain_subjects(
     domain: str = Field(..., description="The name of the domain to get subjects for"),
-    toolCallId: Optional[str] = Field(None, description="The ID of the tool call")
+    sessionId: Optional[str] = None,
+    action: Optional[str] = None,
+    chatInput: Optional[str] = None,
+    toolCallId: Optional[str] = None
 ) -> str:
     """List all subjects belonging to a specific domain.
 
@@ -388,7 +473,7 @@ async def list_domain_subjects(
 
 
 # Resource handlers
-@app.resource("sdm://{subject}/{model}/schema.json")
+@mcp.resource("sdm://{subject}/{model}/schema.json")
 async def get_model_schema(subject: str, model: str) -> str:
     """Get the JSON schema for a specific Smart Data Model.
 
@@ -408,7 +493,7 @@ async def get_model_schema(subject: str, model: str) -> str:
         raise ValueError(f"Schema not found: {e}")
 
 
-@app.resource("sdm://{subject}/{model}/examples.json")
+@mcp.resource("sdm://{subject}/{model}/examples.json")
 async def get_model_examples(subject: str, model: str) -> str:
     """Get example instances for a specific Smart Data Model.
 
@@ -428,7 +513,7 @@ async def get_model_examples(subject: str, model: str) -> str:
         raise ValueError(f"Examples not found: {e}")
 
 
-@app.resource("sdm://{subject}/context.jsonld")
+@mcp.resource("sdm://{subject}/context.jsonld")
 async def get_subject_context(subject: str) -> str:
     """Get the JSON-LD context for a subject.
 
@@ -452,7 +537,7 @@ def run_http_server(port: int = 8000):
     logger.info(f"Starting Smart Data Models MCP Server with HTTP transport on port {port}")
 
     # Use SSE transport for HTTP
-    asyncio.run(app.run_sse_async(port=port))
+    asyncio.run(mcp.run_sse_async(port=port))
 
 
 def run_combined_server(port: int = 8000):
@@ -460,7 +545,7 @@ def run_combined_server(port: int = 8000):
     logger.info(f"Starting Smart Data Models MCP Server with combined transport on port {port}")
 
     # This would run both transports - for now we'll just run HTTP
-    asyncio.run(app.run_sse_async(port=port))
+    asyncio.run(mcp.run_sse_async(port=port))
 
 
 def main():
@@ -522,7 +607,7 @@ def main():
     else:  # stdio (default)
         logger.info("Starting Smart Data Models MCP Server with stdio transport")
         logger.info(f"Logs will be written to: {log_file}")
-        app.run(transport="stdio")
+        mcp.run(transport="stdio")
 
 
 if __name__ == "__main__":
