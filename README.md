@@ -220,13 +220,15 @@ For web-based integrations or when you need to run the server as a web service, 
   "mcpServers": {
     "smart-data-models": {
       "disabled": false,
-      "timeout": 60,
+      "timeout": 180,
       "type": "sse",
       "url": "http://127.0.0.1:3200/sse"
     }
   }
 }
 ```
+
+**Note:** The increased timeout (180 seconds) is specifically configured for the `search_data_models` tool, which can take time as it examines the smart-data-models repositories to find matching models.
 #### local n8n usage configuration
 this mcp server can also be used with n8n through an mcp client node
 the Endpoint should be:
