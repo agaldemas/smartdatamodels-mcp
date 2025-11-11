@@ -36,25 +36,27 @@ except ImportError:
 from fastmcp import FastMCP
 from pydantic import BaseModel, ConfigDict, Field
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
-logger = logging.getLogger(__name__)
-
 # Initialize the FastMCP server
 mcp = FastMCP(
     name="smart-data-models-mcp",
-    instructions="MCP server for FIWARE Smart Data Models - enabling AI agents to work with NGSI (V2 or LD) entities",
+    instructions="""This MCP server provides a comprehensive suite of tools and resources for interacting with FIWARE Smart Data Models. It enables AI agents to:
+- **Discover Data Models**: List available domains, subjects, and models within the Smart Data Models ecosystem.
+- **Search Data Models**: Find specific data models based on keywords, names, or attributes across different domains and subjects.
+- **Retrieve Model Details**: Get detailed information about any Smart Data Model, including its schema, examples, and metadata.
+- **Validate Data**: Validate arbitrary JSON data against the schema of a specified Smart Data Model.
+- **Generate NGSI-LD Entities**: Convert raw JSON data into NGSI-LD compliant entities, facilitating interoperability within FIWARE ecosystems.
+- **Suggest Matching Models**: Recommend suitable Smart Data Models based on the structure and content of provided data.
+
+This server acts as a bridge, allowing AI agents to seamlessly integrate with and leverage the rich context provided by FIWARE Smart Data Models for various applications, including smart cities, energy management, environmental monitoring, and more.""",
     strict_input_validation=False
 )
 
 # Custom middleware to log raw incoming requests
 async def log_raw_request(context: MiddlewareContext, call_next: Callable[[], Awaitable[Any]]) -> Any:
-    # The 'raw_request' attribute is not directly available on MiddlewareContext in this version of fastmcp.
-    # Removing the problematic line to resolve the warning.
-    # If raw request logging is needed, further investigation into fastmcp's MiddlewareContext or alternative logging methods is required.
+    tool_args = {}
+    if hasattr(context, "message") and context.message:
+        tool_args = getattr(context.message, "arguments", {})
+    logger.info(f"MCP Request received. Args: {tool_args}")
     return await call_next(context)
 
 mcp.add_middleware(log_raw_request)
@@ -69,6 +71,7 @@ schema_validator = model_validator.SchemaValidator()
 class SearchDataModelsParams(BaseModel):
     model_config = ConfigDict(extra='allow')
     query: str = Field(..., description="The search query (model name, attributes, or keywords)")
+    domain: Optional[str] = Field(None, description="Limits the search to a specific domain (e.g., 'SmartCities')")
     subject: Optional[str] = Field(None, description="Limits the search to a specific subject (e.g., 'dataModel.User')")
     include_attributes: bool = Field(False, description="Whether to include attribute details in the results")
 
@@ -129,44 +132,6 @@ async def initialize_data():
 
 
 # Tool definitions
-@mcp.tool(exclude_args=["sessionId","toolCallId","action","chatInput"])
-async def search_data_models(
-    query: str = Field(..., description="The search query (model name, attributes, or keywords)"),
-    subject: Optional[str] = Field(None, description="Limits the search to a specific subject (e.g., 'dataModel.User')"),
-    include_attributes: bool = Field(False, description="Whether to include attribute details in the results"),
-    sessionId: Optional[str] = None,
-    action: Optional[str] = None,
-    chatInput: Optional[str] = None,
-    toolCallId: Optional[str] = None
-) -> str:
-    """Search for data models across subjects by name, attributes, or keywords.
-
-    Returns:
-        JSON string with search results
-    """
-    try:
-        subject_param = subject if subject else None
-        results = await data_api.search_models(
-            query=query,
-            subject=subject_param,
-            include_attributes=include_attributes,
-        )
-
-        return json.dumps({
-            "success": True,
-            "results": results,
-            "count": len(results),
-            "query": query
-        }, indent=2)
-
-    except Exception as e:
-        logger.error(f"Search failed: {e}")
-        return json.dumps({
-            "success": False,
-            "error": str(e)
-        }, indent=2)
-
-
 @mcp.tool(exclude_args=["sessionId","toolCallId","action","chatInput"])
 async def list_domains(
     sessionId: Optional[str] = None,
@@ -259,6 +224,44 @@ async def list_models_in_subject(
             "subject": subject
         }, indent=2)
 
+@mcp.tool(exclude_args=["sessionId","toolCallId","action","chatInput"])
+async def search_data_models(
+    query: str = Field(..., description="The search query (model name, attributes, or keywords)"),
+    domain: Optional[str] = Field(None, description="Limits the search to a specific domain (e.g., 'SmartCities')"),
+    subject: Optional[str] = Field(None, description="Limits the search to a specific subject (e.g., 'dataModel.User')"),
+    include_attributes: bool = Field(False, description="Whether to include attribute details in the results"),
+    sessionId: Optional[str] = None,
+    action: Optional[str] = None,
+    chatInput: Optional[str] = None,
+    toolCallId: Optional[str] = None
+) -> str:
+    """Search for data models across subjects by name, attributes, or keywords.
+
+    Returns:
+        JSON string with search results
+    """
+    try:
+        subject_param = subject if subject else None
+        results = await data_api.search_models(
+            query=query,
+            domain=domain,
+            subject=subject_param,
+            include_attributes=include_attributes,
+        )
+
+        return json.dumps({
+            "success": True,
+            "results": results,
+            "count": len(results),
+            "query": query
+        }, indent=2)
+
+    except Exception as e:
+        logger.error(f"Search failed: {e}")
+        return json.dumps({
+            "success": False,
+            "error": str(e)
+        }, indent=2)
 
 @mcp.tool(exclude_args=["sessionId","toolCallId","action","chatInput"])
 async def get_model_details(
@@ -473,6 +476,26 @@ async def list_domain_subjects(
 
 
 # Resource handlers
+@mcp.resource("sdm://instructions")
+async def get_instructions() -> str:
+    """Get this MCP server instructions and capabilities.
+
+    This resource provides the complete instructions text that describes
+    the Smart Data Models MCP server's functionality, including:
+    - Available tools and their purposes
+    - Data model discovery capabilities
+    - NGSI-LD generation features
+    - Validation services
+    - Resource access patterns
+
+    Returns:
+        The MCP server instructions as plain text, containing detailed
+        information about all available tools and resources for working
+        with FIWARE Smart Data Models.
+    """
+    return mcp.instructions
+
+
 @mcp.resource("sdm://{subject}/{model}/schema.json")
 async def get_model_schema(subject: str, model: str) -> str:
     """Get the JSON schema for a specific Smart Data Model.
@@ -567,25 +590,41 @@ def main():
 
     args = parser.parse_args()
 
-    # Configure file logging
+    # Configure logging
     log_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'logs')
     os.makedirs(log_dir, exist_ok=True)
     log_file = os.path.join(log_dir, 'smart-data-models.log')
 
+    root_logger = logging.getLogger()
+    # Clear all existing handlers from the root logger
+    for handler in root_logger.handlers[:]:
+        root_logger.removeHandler(handler)
+
+    root_logger.setLevel(logging.INFO) # Set overall logging level
+
+    # Console handler
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setLevel(logging.INFO)
+    console_formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+    console_handler.setFormatter(console_formatter)
+    root_logger.addHandler(console_handler)
+
+    # File handler
     file_handler = RotatingFileHandler(
         log_file,
         maxBytes=1024*1024,  # 1MB
         backupCount=5
     )
-    file_handler.setLevel(logging.DEBUG)
+    file_handler.setLevel(logging.DEBUG) # File can log more verbosely
     file_formatter = logging.Formatter(
         '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
     )
     file_handler.setFormatter(file_formatter)
-
-    # Add handler to root logger to catch all logs
-    root_logger = logging.getLogger()
     root_logger.addHandler(file_handler)
+
+    # Re-get the module-level logger to ensure it uses the new configuration
+    global logger
+    logger = logging.getLogger(__name__)
 
     # Initialize data before starting the server
     logger.info("Initializing data before starting server...")

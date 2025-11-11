@@ -222,7 +222,7 @@ class SmartDataModelsAPI:
         Args:
             subject: Subject name (may or may not include 'dataModel.' prefix)
         """
-        logger.info("List Models in Subject: Starting - subject='{}' - using GitHub API", subject)
+        logger.info("List Models in Subject: Starting - subject='%s' - using GitHub API", subject)
 
         # Denormalize subject name for internal use
         if subject.startswith("dataModel."):
@@ -231,25 +231,25 @@ class SmartDataModelsAPI:
         cache_key = f"subject_models_{subject}"
         cached = self._cache.get(cache_key)
         if cached:
-            logger.debug("List Models in Subject: Returning cached data - {} models", len(cached) if cached else 0)
+            logger.debug("List Models in Subject: Returning cached data - %s models", len(cached) if cached else 0)
             return cached
 
         # Use GitHub API to get models from the repository
         try:
-            logger.debug("List Models in Subject: Calling _get_models_from_github_api for subject '{}'", subject)
+            logger.debug("List Models in Subject: Calling _get_models_from_github_api for subject '%s'", subject)
             models = await self._get_models_from_github_api(subject)
             if models:
-                logger.info("List Models in Subject: GitHub API success - {} models found for subject '{}'", len(models), subject)
+                logger.info("List Models in Subject: GitHub API success - %s models found for subject '%s'", len(models), subject)
                 # Cache and return the models
                 self._cache.set(cache_key, models)
                 return models
             else:
-                logger.warning("List Models in Subject: No models found for subject '{}' via GitHub API", subject)
+                logger.warning("List Models in Subject: No models found for subject '%s' via GitHub API", subject)
         except Exception as e:
             logger.error(f"GitHub API failed for subject {subject}: {e}")
 
         # Fallback: return empty list
-        logger.info("List Models in Subject: Fallback - returning empty list for subject '{}'", subject)
+        logger.info("List Models in Subject: Fallback - returning empty list for subject '%s'", subject)
         return []
 
     async def list_domain_subjects(self, domain: str) -> List[str]:
@@ -394,62 +394,293 @@ class SmartDataModelsAPI:
     async def search_models(
         self,
         query: str,
+        domain: Optional[str] = None,
         subject: Optional[str] = None,
-        limit: int = 20,
         include_attributes: bool = False
     ) -> List[Dict[str, Any]]:
         """Search for models across subjects.
 
         Args:
             query (str): The search query (model name, attributes, or keywords).
+            domain (Optional[str]): Limits the search to a specific domain.
             subject (Optional[str]): Limits the search to a specific subject.
-            limit (int): The maximum number of results to return (default: 20).
             include_attributes (bool): Whether to include attribute details in the results (default: False).
 
         Returns:
             List[Dict[str, Any]]: A list of dictionaries, each representing a matching data model.
         """
-        logger.info("Search Models: Starting - query='{}', subject='{}', limit={}, include_attributes={} - using comprehensive search", query, subject, limit, include_attributes)
-        cache_key = f"search_{query}_{subject}_{limit}_{include_attributes}"
+        logger.info("Search Models: Starting - query='%s', domain='%s', subject='%s', include_attributes=%s - using comprehensive search", query, domain, subject, include_attributes)
+        cache_key = f"search_{query}_{domain}_{subject}"
 
         # Try cache first
         cached = self._cache.get(cache_key)
         if cached:
-            logger.debug("Search Models: Returning cached data - {} results", len(cached) if cached else 0)
+            logger.debug("Search Models: Returning cached data - %s results", len(cached) if cached else 0)
             return cached
 
         # Perform comprehensive text search across subjects and models
-        results = await self._comprehensive_model_search(query, subject, limit, include_attributes)
+        results = await self._comprehensive_model_search(query, domain, subject, include_attributes)
 
-        logger.info("Search Models: Search completed - {} results found", len(results) if results else 0)
+        logger.info("Search Models: Search completed - %s results found", len(results) if results else 0)
         self._cache.set(cache_key, results)
         return results
 
     async def _comprehensive_model_search(
         self,
         query: str,
+        domain: Optional[str] = None,
         subject: Optional[str] = None,
-        limit: int = 20,
         include_attributes: bool = False
     ) -> List[Dict[str, Any]]:
-        """Perform comprehensive and tolerant search across all models.
+        """Perform optimized comprehensive search across all models using pre-computed index.
 
-        This function searches for models with flexible matching:
-        - Splits query into keywords and matches any keyword
-        - Uses fuzzy matching when available (needs fuzzywuzzy package)
-        - Ranks results by relevance score
-        - Matches against model names, descriptions, and attributes
+        This function uses a multi-layered search strategy:
+        1. Fast index-based search for exact matches
+        2. Fuzzy matching only when necessary
+        3. Relevance scoring and ranking
+        4. Lazy loading of detailed attributes only when needed
         """
-        # Normalize subject parameter
+        logger.info("Optimized search: query='%s', domain='%s', subject='%s'", query, domain, subject)
+
+        # Normalize inputs
+        query_lower = query.lower()
         subject = self._normalize_subject(subject)
 
+        # Prepare search keywords
+        keywords = [k.strip() for k in query_lower.split() if k.strip()]
+        search_keywords = [query_lower] + keywords
+
+        # Determine search scope
+        if subject:
+            subjects_to_search = [subject]
+        elif domain:
+            subjects_to_search = await self.list_domain_subjects(domain)
+        else:
+            subjects_to_search = await self.list_subjects()
+
+        # Try to use optimized index search first
+        index_results = await self._fast_index_search(
+            search_keywords, subjects_to_search, include_attributes
+        )
+
+        if index_results:
+            logger.info("Index search found %d results", len(index_results))
+            return index_results
+
+        # Fallback to comprehensive search with optimizations
+        logger.info("Falling back to comprehensive search")
+        return await self._optimized_comprehensive_search(
+            search_keywords, subjects_to_search, include_attributes
+        )
+
+    async def _fast_index_search(
+        self,
+        search_keywords: List[str],
+        subjects_to_search: List[str],
+        include_attributes: bool
+    ) -> List[Dict[str, Any]]:
+        """Fast index-based search using pre-computed metadata."""
         results = []
 
-        # Prepare search keywords - split on spaces and remove empty strings
-        keywords = [k.lower().strip() for k in query.split() if k.strip()]
-        search_keywords = [query.lower()] + keywords  # Include full query and individual words
+        # Try to get from search cache first
+        cache_key = f"search_index_{'_'.join(sorted(search_keywords))}"
+        cached = self._cache.get(cache_key)
+        if cached:
+            logger.debug("Using cached search results")
+            return cached
 
-        subjects_to_search = [subject] if subject else await self.list_subjects()
+        # Build search index if not exists
+        await self._ensure_search_index()
+
+        # Search through index
+        for subject_name in subjects_to_search:
+            subject_index = self._search_index.get(subject_name, {})
+
+            for model_name, model_meta in subject_index.items():
+                relevance_score = 0
+                matched_parts = []
+
+                # Fast exact matching against pre-indexed data
+                model_name_lower = model_name.lower()
+                desc_lower = model_meta.get("description", "").lower()
+
+                # Subject matching
+                subject_score = 0
+                if len(subjects_to_search) > 1:  # Only score subject if searching multiple
+                    for keyword in search_keywords:
+                        if keyword in subject_name.lower():
+                            subject_score += 1.5
+                            break
+                if subject_score > 0:
+                    matched_parts.append("subject")
+                    relevance_score += subject_score
+
+                # Model name matching (highest priority)
+                name_score = 0
+                for keyword in search_keywords:
+                    if keyword in model_name_lower:
+                        name_score += 3.0  # Higher weight for exact name matches
+                        break
+                if name_score > 0:
+                    matched_parts.append("name")
+                    relevance_score += name_score
+
+                # Description matching
+                desc_score = 0
+                for keyword in search_keywords:
+                    if keyword in desc_lower:
+                        desc_score += 1.0
+                        break
+                if desc_score > 0:
+                    matched_parts.append("description")
+                    relevance_score += desc_score
+
+                # Attribute matching (lazy load if needed)
+                attr_score = 0
+                if relevance_score > 0:  # Only check attributes if already relevant
+                    attributes = model_meta.get("attributes", [])
+                    matched_attrs = []
+
+                    for attr in attributes:
+                        attr_name = attr.get("name", "").lower()
+                        attr_desc = attr.get("description", "").lower()
+
+                        for keyword in search_keywords:
+                            if keyword in attr_name or keyword in attr_desc:
+                                attr_score += 1.5
+                                if include_attributes:
+                                    matched_attrs.append(attr)
+                                break
+
+                    if attr_score > 0:
+                        matched_parts.append("attributes")
+                        relevance_score += attr_score
+
+                # Include result if relevant
+                if relevance_score > 0:
+                    model_info = {
+                        "subject": subject_name,
+                        "model": model_name,
+                        "description": model_meta.get("description", ""),
+                        "relevance_score": round(relevance_score, 2),
+                        "matched_parts": matched_parts,
+                        "source": model_meta.get("source", "index")
+                    }
+
+                    if include_attributes and matched_attrs:
+                        model_info["attributes"] = matched_attrs
+
+                    results.append(model_info)
+
+        # Sort and cache results
+        results.sort(key=lambda x: x["relevance_score"], reverse=True)
+        self._cache.set(cache_key, results)
+
+        return results
+
+    async def _ensure_search_index(self):
+        """Ensure search index is built and up to date."""
+        if hasattr(self, '_search_index') and self._search_index:
+            return  # Index already exists
+
+        logger.info("Building search index...")
+        self._search_index = {}
+
+        subjects = await self.list_subjects()
+
+        for subject_name in subjects[:50]:  # Limit initial index build
+            try:
+                models = await self.list_models_in_subject(subject_name)
+                subject_index = {}
+
+                for model_name in models[:20]:  # Limit models per subject
+                    try:
+                        # Get lightweight model metadata (avoid expensive operations)
+                        meta = await self._get_lightweight_model_meta(subject_name, model_name)
+                        if meta:
+                            subject_index[model_name] = meta
+                    except Exception as e:
+                        logger.debug(f"Failed to index {subject_name}/{model_name}: {e}")
+                        continue
+
+                if subject_index:
+                    self._search_index[subject_name] = subject_index
+
+            except Exception as e:
+                logger.debug(f"Failed to index subject {subject_name}: {e}")
+                continue
+
+        logger.info("Search index built with %d subjects", len(self._search_index))
+
+    async def _get_lightweight_model_meta(self, subject: str, model: str) -> Optional[Dict[str, Any]]:
+        """Get lightweight metadata for search indexing (avoids expensive operations)."""
+        cache_key = f"light_meta_{subject}_{model}"
+        cached = self._cache.get(cache_key)
+        if cached:
+            return cached
+
+        # Try pysmartdatamodels first (fastest)
+        try:
+            if PYSMARTDATAMODELS_AVAILABLE:
+                from pysmartdatamodels import description_attribute, attributes_datamodel
+
+                # Get basic description
+                description = await self._run_sync_in_thread(
+                    psdm.description_attribute, subject, model, "id"  # Use 'id' as it's always present
+                )
+
+                # Get attributes list (lightweight)
+                attributes = await self._run_sync_in_thread(attributes_datamodel, subject, model)
+
+                if attributes:
+                    # Convert to lightweight format
+                    light_attrs = [{"name": attr, "description": ""} for attr in attributes[:10]]  # Limit attributes
+
+                    meta = {
+                        "description": description or f"Smart Data Model for {model}",
+                        "attributes": light_attrs,
+                        "source": "pysmartdatamodels"
+                    }
+
+                    self._cache.set(cache_key, meta)
+                    return meta
+
+        except Exception as e:
+            logger.debug(f"pysmartdatamodels meta failed for {subject}/{model}: {e}")
+
+        # Fallback to basic GitHub info
+        try:
+            basic_info = await self._get_basic_model_details_from_github(subject, model)
+            if basic_info:
+                # Convert to lightweight format
+                light_attrs = [
+                    {"name": attr["name"], "description": attr.get("description", "")}
+                    for attr in basic_info.get("attributes", [])[:10]
+                ]
+
+                meta = {
+                    "description": basic_info.get("description", f"Smart Data Model for {model}"),
+                    "attributes": light_attrs,
+                    "source": "github_basic"
+                }
+
+                self._cache.set(cache_key, meta)
+                return meta
+
+        except Exception as e:
+            logger.debug(f"GitHub meta failed for {subject}/{model}: {e}")
+
+        return None
+
+    async def _optimized_comprehensive_search(
+        self,
+        search_keywords: List[str],
+        subjects_to_search: List[str],
+        include_attributes: bool
+    ) -> List[Dict[str, Any]]:
+        """Optimized comprehensive search with batching and early termination."""
+        results = []
+        max_results = 50  # Limit results for performance
 
         # Import fuzzywuzzy for better matching if available
         try:
@@ -457,120 +688,129 @@ class SmartDataModelsAPI:
             FUZZY_AVAILABLE = True
         except ImportError:
             FUZZY_AVAILABLE = False
-            logger.debug("fuzzywuzzy not available, using exact matching")
 
         for subject_name in subjects_to_search:
+            if len(results) >= max_results:
+                break  # Early termination
+
             try:
-                # Get all models in this subject
-                models = await self.list_models_in_subject(subject_name, limit=200)  # Higher limit for search
+                # Get models for this subject
+                models = await self.list_models_in_subject(subject_name)
 
-                for model_name in models:
-                    try:
-                        # Get model details which includes attributes information
-                        details = await self.get_model_details(subject_name, model_name)
+                # Process models in batches to avoid overwhelming the system
+                batch_size = 10
+                for i in range(0, len(models), batch_size):
+                    if len(results) >= max_results:
+                        break
 
-                        # Calculate relevance score based on keyword matches
-                        relevance_score = 0
-                        matched_parts = []
-                        matched_attr_details = []
+                    batch = models[i:i + batch_size]
 
-                        model_name_lower = model_name.lower()
-                        description_lower = details.get("description", "").lower()
+                    # Process batch concurrently
+                    batch_tasks = [
+                        self._score_model_for_search(
+                            subject_name, model_name, search_keywords, include_attributes, FUZZY_AVAILABLE
+                        )
+                        for model_name in batch
+                    ]
 
-                        # Check model name matches
-                        name_score = 0
-                        for keyword in search_keywords:
-                            if keyword in model_name_lower:
-                                name_score += 2  # Higher weight for name matches
-                            elif FUZZY_AVAILABLE and len(keyword) > 3:
-                                # Fuzzy matching for longer keywords
-                                similarity = fuzz.partial_ratio(keyword, model_name_lower)
-                                if similarity >= 80:  # High similarity threshold
-                                    name_score += 1.5
+                    batch_results = await asyncio.gather(*batch_tasks, return_exceptions=True)
 
-                        if name_score > 0:
-                            matched_parts.append("name")
-                            relevance_score += name_score
+                    for result in batch_results:
+                        if isinstance(result, dict) and result.get("relevance_score", 0) > 0:
+                            results.append(result)
 
-                        # Check description matches
-                        desc_score = 0
-                        for keyword in search_keywords:
-                            if keyword in description_lower:
-                                desc_score += 1
-                            elif FUZZY_AVAILABLE and len(keyword) > 3:
-                                # Fuzzy matching for longer keywords
-                                similarity = fuzz.partial_ratio(keyword, description_lower)
-                                if similarity >= 75:  # Slightly lower threshold for descriptions
-                                    desc_score += 0.8
-
-                        if desc_score > 0:
-                            matched_parts.append("description")
-                            relevance_score += desc_score
-
-                        # Check attribute matches (if requested and available)
-                        attr_score = 0
-                        if include_attributes or "attributes" in details:
-                            attributes = details.get("attributes", [])
-                            for attr in attributes:
-                                attr_name = attr.get("name", "").lower()
-                                attr_desc = attr.get("description", "").lower()
-
-                                for keyword in search_keywords:
-                                    if keyword in attr_name or keyword in attr_desc:
-                                        attr_score += 1.5  # Attribute matches are important
-                                        matched_attr_details.append({
-                                            "name": attr["name"],
-                                            "description": attr.get("description", "")
-                                        })
-                                        break
-                                    elif FUZZY_AVAILABLE and len(keyword) > 3:
-                                        # Fuzzy matching for attributes
-                                        name_similarity = fuzz.partial_ratio(keyword, attr_name)
-                                        desc_similarity = fuzz.partial_ratio(keyword, attr_desc)
-                                        if name_similarity >= 80 or desc_similarity >= 75:
-                                            attr_score += 1.2
-                                            matched_attr_details.append({
-                                                "name": attr["name"],
-                                                "description": attr.get("description", "")
-                                            })
-                                            break
-
-                        if attr_score > 0:
-                            matched_parts.append("attributes")
-                            relevance_score += attr_score
-
-                        # Only include models with some relevance
-                        if relevance_score > 0:
-                            model_info = {
-                                "subject": subject_name,
-                                "model": model_name,
-                                "name": model_name,
-                                "description": details.get("description", ""),
-                                "relevance_score": round(relevance_score, 2),
-                                "matched_parts": matched_parts,
-                                "source": details.get("source", "pysmartdatamodels")
-                            }
-
-                            if matched_attr_details:
-                                # Include most relevant attribute match
-                                model_info["matched_attributes"] = matched_attr_details[:3]  # Limit to top 3
-
-                            if include_attributes and "attributes" in details:
-                                model_info["attributes"] = details["attributes"]
-
-                            results.append(model_info)
-
-                    except Exception as e:
-                        logger.debug(f"Error checking model {subject_name}/{model_name}: {e}")
-                        continue
+                            if len(results) >= max_results:
+                                break
 
             except Exception as e:
                 logger.debug(f"Error searching subject {subject_name}: {e}")
                 continue
 
-        # Sort results by relevance score (highest first) and return limited results
+        # Sort results by relevance score
         results.sort(key=lambda x: x["relevance_score"], reverse=True)
-        return results[:limit] if len(results) > limit else results
+        return results[:max_results]
+
+    async def _score_model_for_search(
+        self,
+        subject_name: str,
+        model_name: str,
+        search_keywords: List[str],
+        include_attributes: bool,
+        fuzzy_available: bool
+    ) -> Dict[str, Any]:
+        """Score a single model for search relevance."""
+        try:
+            # Use lightweight metadata first
+            meta = await self._get_lightweight_model_meta(subject_name, model_name)
+            if not meta:
+                return {}
+
+            relevance_score = 0
+            matched_parts = []
+
+            model_name_lower = model_name.lower()
+            desc_lower = meta.get("description", "").lower()
+
+            # Fast exact matching first
+            for keyword in search_keywords:
+                # Model name (highest priority)
+                if keyword in model_name_lower:
+                    relevance_score += 3.0
+                    matched_parts.append("name")
+
+                # Description
+                elif keyword in desc_lower:
+                    relevance_score += 1.0
+                    matched_parts.append("description")
+
+                # Subject (if searching multiple subjects)
+                elif keyword in subject_name.lower():
+                    relevance_score += 1.5
+                    matched_parts.append("subject")
+
+            # Attributes (only if basic relevance found)
+            if relevance_score > 0:
+                attributes = meta.get("attributes", [])
+                matched_attrs = []
+
+                for attr in attributes:
+                    attr_name = attr.get("name", "").lower()
+                    attr_desc = attr.get("description", "").lower()
+
+                    for keyword in search_keywords:
+                        if keyword in attr_name or keyword in attr_desc:
+                            relevance_score += 1.5
+                            matched_parts.append("attributes")
+                            if include_attributes:
+                                matched_attrs.append(attr)
+                            break
+
+                        # Fuzzy matching only for longer keywords
+                        elif fuzzy_available and len(keyword) > 3:
+                            name_sim = fuzz.partial_ratio(keyword, attr_name)
+                            desc_sim = fuzz.partial_ratio(keyword, attr_desc)
+                            if name_sim >= 80 or desc_sim >= 75:
+                                relevance_score += 1.2
+                                matched_parts.append("attributes")
+                                if include_attributes:
+                                    matched_attrs.append(attr)
+                                break
+
+            if relevance_score > 0:
+                return {
+                    "subject": subject_name,
+                    "model": model_name,
+                    "description": meta.get("description", ""),
+                    "relevance_score": round(relevance_score, 2),
+                    "matched_parts": list(set(matched_parts)),
+                    "source": meta.get("source", "optimized_search"),
+                    "attributes": matched_attrs if include_attributes and matched_attrs else []
+                }
+
+        except Exception as e:
+            logger.debug(f"Error scoring model {subject_name}/{model_name}: {e}")
+
+        return {}
 
     async def _direct_model_name_search(
         self,
@@ -606,7 +846,6 @@ class SmartDataModelsAPI:
         self,
         query: str,
         subject: Optional[str] = None,
-        limit: int = 20,
         include_attributes: bool = False
     ) -> List[Dict[str, Any]]:
         """Perform simple text search across models."""
@@ -617,7 +856,7 @@ class SmartDataModelsAPI:
 
         for subject_name in subjects_to_search:
             try:
-                models = await self.list_models_in_subject(subject_name, limit=100)
+                models = await self.list_models_in_subject(subject_name)
                 for model_name in models:
                     try:
                         details = await self.get_model_details(subject_name, model_name)
@@ -647,9 +886,6 @@ class SmartDataModelsAPI:
 
                             results.append(model_info)
 
-                            if len(results) >= limit:
-                                return results
-
                     except Exception as e:
                         logger.debug(f"Error checking model {subject_name}/{model_name}: {e}")
                         continue
@@ -671,29 +907,34 @@ class SmartDataModelsAPI:
             Dict[str, Any]: A dictionary containing detailed information about the model,
                             including its description, attributes, and source.
         """
-        logger.info("Get Model Details: Starting - subject='{}', model='{}' - strategies: GitHub analyzer -> GitHub basic -> pysmartdatamodels -> fallback", subject, model)
+        logger.info("Get Model Details: Starting - subject='%s', model='%s' - strategies: GitHub analyzer -> GitHub basic -> pysmartdatamodels -> fallback", subject, model)
         cache_key = f"model_details_{subject}_{model}"
 
         # Try cache first
         cached = self._cache.get(cache_key)
         if cached:
-            logger.debug("Get Model Details: Returning cached data for {}/{}", subject, model)
+            logger.debug("Get Model Details: Returning cached data for %s/%s", subject, model)
             return cached
+
+        # Normalize subject for consistent processing
+        normalized_subject = self._normalize_subject(subject)
 
         # Try to use GitHub analyzer to get metadata
         try:
-            logger.debug("Get Model Details: Attempting GitHub analyzer for {}/{}", subject, model)
+            logger.debug("Get Model Details: Attempting GitHub analyzer for %s/%s", normalized_subject, model)
             analyzer = EmbeddedGitHubAnalyzer()
-            repo_url = f"https://smart-data-models.github.io/dataModel.{subject}/{model}"
+            # Remove 'dataModel.' prefix for analyzer URL construction
+            analyzer_subject = normalized_subject[10:] if normalized_subject.startswith("dataModel.") else normalized_subject
+            repo_url = f"https://smart-data-models.github.io/dataModel.{analyzer_subject}/{model}"
 
             # Run the synchronous analyzer in thread
             metadata = await self._run_sync_in_thread(analyzer.generate_metadata, repo_url)
 
             if metadata:
-                logger.info("Get Model Details: GitHub analyzer success for {}/{} - source: github_analyzer", subject, model)
+                logger.info("Get Model Details: GitHub analyzer success for %s/%s - source: github_analyzer", normalized_subject, model)
                 # Convert GitHub analyzer format to the expected format
                 processed_details = {
-                    "subject": metadata["subject"],
+                    "subject": normalized_subject,  # Use normalized subject
                     "model": metadata["dataModel"],
                     "description": metadata["description"],
                     "version": metadata.get("version", "0.1.1"),
@@ -725,7 +966,7 @@ class SmartDataModelsAPI:
 
                 # Try to get attributes from the schema
                 try:
-                    schema = await self.get_model_schema(subject, model)
+                    schema = await self.get_model_schema(normalized_subject, model)
                     if schema and isinstance(schema, dict):
                         attributes = []
                         required_attrs = schema.get("required", [])
@@ -749,19 +990,19 @@ class SmartDataModelsAPI:
                 return processed_details
 
         except Exception as e:
-            logger.debug(f"GitHub analyzer failed for {subject}/{model}: {e}")
-            logger.info("Get Model Details: GitHub analyzer failed for {}/{} - trying fallback GitHub basic", subject, model)
+            logger.debug(f"GitHub analyzer failed for {normalized_subject}/{model}: {e}")
+            logger.info("Get Model Details: GitHub analyzer failed for %s/%s - trying fallback GitHub basic", normalized_subject, model)
 
         # Fallback 1: Try basic GitHub details
         try:
-            details = await self._get_basic_model_details_from_github(subject, model)
+            details = await self._get_basic_model_details_from_github(normalized_subject, model)
             if details:
-                logger.info("Get Model Details: GitHub basic success for {}/{} - source: {}", subject, model, details.get("source", "unknown"))
+                logger.info("Get Model Details: GitHub basic success for %s/%s - source: %s", normalized_subject, model, details.get("source", "unknown"))
                 self._cache.set(cache_key, details)
                 return details
         except Exception as e:
-            logger.debug(f"Basic GitHub details fallback failed for {subject}/{model}: {e}")
-            logger.info("Get Model Details: GitHub basic failed for {}/{} - trying pysmartdatamodels", subject, model)
+            logger.debug(f"Basic GitHub details fallback failed for {normalized_subject}/{model}: {e}")
+            logger.info("Get Model Details: GitHub basic failed for %s/%s - trying pysmartdatamodels", normalized_subject, model)
 
         # Fallback 2: Try pysmartdatamodels as final fallback
         try:
@@ -773,7 +1014,7 @@ class SmartDataModelsAPI:
             )
 
             # Get attributes list for this model
-            attributes_list = await self._run_sync_in_thread(attributes_datamodel, subject, model)
+            attributes_list = await self._run_sync_in_thread(attributes_datamodel, normalized_subject, model)
 
             if attributes_list and isinstance(attributes_list, list):
                 attributes = []
@@ -782,11 +1023,11 @@ class SmartDataModelsAPI:
                 for attr_name in attributes_list[:50]:  # Limit to avoid too many calls
                     try:
                         # Get description, data type, and NGSI type for each attribute
-                        attr_desc = await self._run_sync_in_thread(description_attribute, subject, model, attr_name)
-                        attr_type = await self._run_sync_in_thread(datatype_attribute, subject, model, attr_name)
-                        ngsi_type = await self._run_sync_in_thread(ngsi_datatype_attribute, subject, model, attr_name)
-                        attr_units = await self._run_sync_in_thread(units_attribute, subject, model, attr_name)
-                        attr_model = await self._run_sync_in_thread(model_attribute, subject, model, attr_name)
+                        attr_desc = await self._run_sync_in_thread(description_attribute, normalized_subject, model, attr_name)
+                        attr_type = await self._run_sync_in_thread(datatype_attribute, normalized_subject, model, attr_name)
+                        ngsi_type = await self._run_sync_in_thread(ngsi_datatype_attribute, normalized_subject, model, attr_name)
+                        attr_units = await self._run_sync_in_thread(units_attribute, normalized_subject, model, attr_name)
+                        attr_model = await self._run_sync_in_thread(model_attribute, normalized_subject, model, attr_name)
 
                         attribute_info = {
                             "name": attr_name,
@@ -813,11 +1054,11 @@ class SmartDataModelsAPI:
                         })
 
                 # Try to get metadata for the model
-                metadata = await self._run_sync_in_thread(list_datamodel_metadata, model, subject)
+                metadata = await self._run_sync_in_thread(list_datamodel_metadata, model, normalized_subject)
                 if metadata and isinstance(metadata, dict):
                     # Extract information from metadata
                     processed_details = {
-                        "subject": subject,
+                        "subject": normalized_subject,
                         "model": model,
                         "description": metadata.get("description", f"Smart Data Model for {model}"),
                         "attributes": attributes,
@@ -834,9 +1075,9 @@ class SmartDataModelsAPI:
                 else:
                     # No metadata available, use basic constructed details
                     processed_details = {
-                        "subject": subject,
+                        "subject": normalized_subject,
                         "model": model,
-                        "description": f"Smart Data Model for {model} in {subject} subject",
+                        "description": f"Smart Data Model for {model} in {normalized_subject} subject",
                         "attributes": attributes,
                         "source": "pysmartdatamodels"
                     }
@@ -844,13 +1085,13 @@ class SmartDataModelsAPI:
                     return processed_details
 
         except Exception as e:
-            logger.debug(f"pysmartdatamodels details construction failed for {subject}/{model}: {e}")
+            logger.debug(f"pysmartdatamodels details construction failed for {normalized_subject}/{model}: {e}")
 
         # Ultimate fallback
         details = {
-            "subject": subject,
+            "subject": normalized_subject,
             "model": model,
-            "description": f"Smart Data Model for {model} in {subject} subject",
+            "description": f"Smart Data Model for {model} in {normalized_subject} subject",
             "attributes": [],
             "source": "fallback"
         }
@@ -864,6 +1105,9 @@ class SmartDataModelsAPI:
         """
         try:
             actual_repo_subject = repo_subject if repo_subject else subject
+            # Remove 'dataModel.' prefix if present to construct correct repo name
+            if actual_repo_subject.startswith("dataModel."):
+                actual_repo_subject = actual_repo_subject[10:]
             repo_name = f"dataModel.{actual_repo_subject}"
 
             # Try to get README for description
@@ -973,7 +1217,7 @@ class SmartDataModelsAPI:
         Returns:
             List[Dict[str, Any]]: A list of dictionaries, each representing an example instance of the model.
         """
-        logger.info("Get Model Examples: Starting - subject='{}', model='{}' - strategies: pysmartdatamodels -> GitHub -> generation", subject, model)
+        logger.info("Get Model Examples: Starting - subject='%s', model='%s' - strategies: pysmartdatamodels -> GitHub -> generation", subject, model)
         # Normalize subject parameter
         subject = self._normalize_subject(subject)
         repo_subject = self._normalize_subject(repo_subject)
@@ -983,12 +1227,12 @@ class SmartDataModelsAPI:
         # Try cache first
         cached = self._cache.get(cache_key)
         if cached:
-            logger.debug("Get Model Examples: Returning cached data for {}/{}", subject, model)
+            logger.debug("Get Model Examples: Returning cached data for %s/%s", subject, model)
             return cached
 
         # Try pysmartdatamodels with schema URL (it requires a full schema URL, not subject/model)
         try:
-            logger.debug("Get Model Examples: Attempting pysmartdatamodels for {}/{}", subject, model)
+            logger.debug("Get Model Examples: Attempting pysmartdatamodels for %s/%s", subject, model)
             # Construct the schema URL first
             actual_repo_subject = repo_subject if repo_subject else subject
             repo_name = f"dataModel.{actual_repo_subject}"
@@ -997,7 +1241,7 @@ class SmartDataModelsAPI:
             examples = await self._run_sync_in_thread(psdm.ngsi_ld_example_generator, schema_url)
 
             if examples and examples != "dataModel" and examples != "False":
-                logger.info("Get Model Examples: pysmartdatamodels success for {}/{} - {} examples generated", subject, model, len(examples) if isinstance(examples, list) else 1)
+                logger.info("Get Model Examples: pysmartdatamodels success for %s/%s - %s examples generated", subject, model, len(examples) if isinstance(examples, list) else 1)
                 if isinstance(examples, dict):
                     examples = [examples]
                 elif isinstance(examples, list):
@@ -1008,7 +1252,7 @@ class SmartDataModelsAPI:
 
         except Exception as e:
             logger.debug(f"pysmartdatamodels examples failed for {subject}/{model}: {e}")
-            logger.info("Get Model Examples: pysmartdatamodels failed for {}/{} - trying GitHub", subject, model)
+            logger.info("Get Model Examples: pysmartdatamodels failed for %s/%s - trying GitHub", subject, model)
 
         # Fallback: try to get from GitHub examples
         try:
@@ -1016,18 +1260,18 @@ class SmartDataModelsAPI:
             denormalized_subject = subject[10:] if subject.startswith("dataModel.") else subject
             examples = await self._get_examples_from_github(denormalized_subject, model, repo_subject=None)
             if examples:
-                logger.info("Get Model Examples: GitHub success for {}/{} - {} examples found", subject, model, len(examples))
+                logger.info("Get Model Examples: GitHub success for %s/%s - %s examples found", subject, model, len(examples))
                 self._cache.set(cache_key, examples)
                 return examples
         except Exception as e:
             logger.debug(f"GitHub examples failed for {subject}/{model}: {e}")
-            logger.info("Get Model Examples: GitHub failed for {}/{} - trying basic generation", subject, model)
+            logger.info("Get Model Examples: GitHub failed for %s/%s - trying basic generation", subject, model)
 
         # Ultimate fallback: generate basic example
         example = await self._generate_basic_example(subject, model)
         examples = [example] if example else []
         if examples:
-            logger.info("Get Model Examples: Basic generation successful for {}/{}", subject, model)
+            logger.info("Get Model Examples: Basic generation successful for %s/%s", subject, model)
         else:
             logger.warning(f"Get Model Examples: Basic generation failed for {subject}/{model} - no examples available")
 
@@ -1166,12 +1410,11 @@ class SmartDataModelsAPI:
             }
         }
 
-    async def suggest_matching_models(self, data: Dict[str, Any], top_k: int = 5) -> List[Dict[str, Any]]:
+    async def suggest_matching_models(self, data: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Suggest models that match the provided data structure.
 
         Args:
             data (Dict[str, Any]): The data structure (as a dictionary) to compare against models.
-            top_k (int): The number of top matching models to return (default: 5).
 
         Returns:
             List[Dict[str, Any]]: A list of dictionaries, each containing a suggested model,
@@ -1192,9 +1435,9 @@ class SmartDataModelsAPI:
                 # Normalize subject parameter
                 normalized_subject = self._normalize_subject(subject)
 
-                models = await self.list_models_in_subject(normalized_subject, limit=100)
+                models = await self.list_models_in_subject(normalized_subject)
 
-                for model_name in models[:50]:  # Limit to avoid too many requests
+                for model_name in models:
                     try:
                         details = await self.get_model_details(subject, model_name)
 
@@ -1223,6 +1466,6 @@ class SmartDataModelsAPI:
                 logger.debug(f"Error in subject {subject}: {e}")
                 continue
 
-        # Sort by similarity and return top k
+        # Sort by similarity
         candidates.sort(key=lambda x: x["similarity"], reverse=True)
-        return candidates[:top_k]
+        return candidates

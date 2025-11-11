@@ -34,6 +34,7 @@ This MCP server allows AI agents to:
 - Data-model compatibility analysis
 
 ### 📊 Resources
+- **Server Instructions**: `sdm://instructions` - Get the MCP server instructions and capabilities
 - Direct access to JSON schemas: `sdm://domain/model/schema.json`
 - Model examples: `sdm://domain/model/examples.json`
 - Domain contexts: `sdm://domain/context.jsonld`
@@ -135,11 +136,15 @@ python src/smart_data_models_mcp/server.py --transport sse --port 3200
 
 **Examples:**
 ```bash
+cd ~/Documents/mcp/smartdatamodels-mcp
 # Run in stdio mode (default)
 uv run python src/smart_data_models_mcp/server.py
 
 # Run in SSE mode on port 3200
 uv run python src/smart_data_models_mcp/server.py --transport sse --port 3200
+
+
+uv run --active python src/smart_data_models_mcp/server.py --transport sse --port 3200
 
 # Run in SSE mode on different host and port
 uv run python src/smart_data_models_mcp/server.py --transport sse --host 0.0.0.0 --port 8080
