@@ -190,6 +190,21 @@ To configure the smart-data-models-mcp server for use with Cline, add the follow
 }
 ```
 
+#### HTTP Streamable Mode
+```json
+{
+  "mcpServers": {
+    "smart-data-models-http": {
+      "autoApprove": [],
+      "disabled": false,
+      "type": "streamableHttp",
+      "timeout": 180,
+      "url": "http://127.0.0.1:3210/mcp"
+    }
+  }
+}
+```
+
 ### Claude Desktop Configuration
 
 If you prefer to use the server with Claude Desktop, add the following to your Claude Desktop configuration file:

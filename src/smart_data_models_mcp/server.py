@@ -36,6 +36,9 @@ except ImportError:
 from fastmcp import FastMCP
 from pydantic import BaseModel, ConfigDict, Field
 
+# Initialize logger early to avoid NameError in middleware
+logger = logging.getLogger(__name__)
+
 # Initialize the FastMCP server
 mcp = FastMCP(
     name="smart-data-models-mcp",
@@ -51,6 +54,19 @@ This server acts as a bridge, allowing AI agents to seamlessly integrate with an
     strict_input_validation=False
 )
 
+# Custom middleware to handle CORS for HTTP streaming
+async def cors_middleware(context: MiddlewareContext, call_next: Callable[[], Awaitable[Any]]) -> Any:
+    """Add CORS headers for HTTP requests."""
+    # For HTTP transport, add CORS headers
+    if hasattr(context, "response") and context.response:
+        context.response.headers.update({
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Requested-With",
+            "Access-Control-Max-Age": "86400",  # 24 hours
+        })
+    return await call_next(context)
+
 # Custom middleware to log raw incoming requests
 async def log_raw_request(context: MiddlewareContext, call_next: Callable[[], Awaitable[Any]]) -> Any:
     tool_args = {}
@@ -59,6 +75,8 @@ async def log_raw_request(context: MiddlewareContext, call_next: Callable[[], Aw
     logger.info(f"MCP Request received. Args: {tool_args}")
     return await call_next(context)
 
+# Add middlewares in order
+mcp.add_middleware(cors_middleware)
 mcp.add_middleware(log_raw_request)
 
 # Global instances for data access and utilities
@@ -475,6 +493,57 @@ async def list_domain_subjects(
         }, indent=2)
 
 
+@mcp.tool(exclude_args=["sessionId","toolCallId","action","chatInput"])
+async def health_check(
+    sessionId: Optional[str] = None,
+    action: Optional[str] = None,
+    chatInput: Optional[str] = None,
+    toolCallId: Optional[str] = None
+) -> str:
+    """Check the health status of the MCP server and its connections.
+
+    Returns:
+        JSON string with server health information
+    """
+    try:
+        import time
+        import psutil
+
+        # Basic health checks
+        health_info = {
+            "status": "healthy",
+            "timestamp": time.time(),
+            "server_info": {
+                "name": mcp.name,
+                "version": "1.0.0",
+                "transport": "Modern HTTP streaming enabled"
+            },
+            "data_cache": {
+                "initialized": True,
+                "domains_count": len(await data_api.list_domains()) if hasattr(data_api, 'list_domains') else 0,
+                "subjects_count": len(await data_api.list_subjects()) if hasattr(data_api, 'list_subjects') else 0
+            },
+            "system_info": {
+                "cpu_percent": psutil.cpu_percent(interval=0.1),
+                "memory_percent": psutil.virtual_memory().percent,
+                "uptime_seconds": time.time() - psutil.boot_time()
+            }
+        }
+
+        return json.dumps({
+            "success": True,
+            "health": health_info
+        }, indent=2)
+
+    except Exception as e:
+        logger.error(f"Health check failed: {e}")
+        return json.dumps({
+            "success": False,
+            "error": f"Health check failed: {str(e)}",
+            "status": "unhealthy"
+        }, indent=2)
+
+
 # Resource handlers
 @mcp.resource("sdm://instructions")
 async def get_instructions() -> str:
@@ -513,7 +582,12 @@ async def get_model_schema(subject: str, model: str) -> str:
         return json.dumps(schema, indent=2)
     except Exception as e:
         logger.error(f"Failed to get schema for {subject}/{model}: {e}")
-        raise ValueError(f"Schema not found: {e}")
+        # Return error as JSON string instead of raising exception for HTTP streaming
+        return json.dumps({
+            "error": f"Schema not found for {subject}/{model}: {str(e)}",
+            "subject": subject,
+            "model": model
+        }, indent=2)
 
 
 @mcp.resource("sdm://{subject}/{model}/examples.json")
@@ -533,7 +607,12 @@ async def get_model_examples(subject: str, model: str) -> str:
         return json.dumps(examples, indent=2)
     except Exception as e:
         logger.error(f"Failed to get examples for {subject}/{model}: {e}")
-        raise ValueError(f"Examples not found: {e}")
+        # Return error as JSON string instead of raising exception for HTTP streaming
+        return json.dumps({
+            "error": f"Examples not found for {subject}/{model}: {str(e)}",
+            "subject": subject,
+            "model": model
+        }, indent=2)
 
 
 @mcp.resource("sdm://{subject}/context.jsonld")
@@ -552,23 +631,35 @@ async def get_subject_context(subject: str) -> str:
         return json.dumps(context, indent=2)
     except Exception as e:
         logger.error(f"Failed to get context for {subject}: {e}")
-        raise ValueError(f"Context not found: {e}")
+        # Return error as JSON string instead of raising exception for HTTP streaming
+        return json.dumps({
+            "error": f"Context not found for {subject}: {str(e)}",
+            "subject": subject
+        }, indent=2)
 
 
-def run_http_server(port: int = 8000):
-    """Run the MCP server with HTTP/SSE support."""
-    logger.info(f"Starting Smart Data Models MCP Server with HTTP transport on port {port}")
+def run_http_streaming_server(port: int = 8000):
+    """Run the MCP server with HTTP streaming support."""
+    logger.info(f"Starting Smart Data Models MCP Server with HTTP streaming transport on port {port}")
 
-    # Use SSE transport for HTTP
-    asyncio.run(mcp.run_sse_async(port=port))
+    # Use HTTP streaming transport
+    asyncio.run(mcp.run_http_async(port=port, transport="streamable-http", path="/mcp"))
+
+
+def run_sse_server(port: int = 8000):
+    """Run the MCP server with SSE support."""
+    logger.info(f"Starting Smart Data Models MCP Server with SSE transport on port {port}")
+
+    # Use SSE transport
+    asyncio.run(mcp.run_http_async(port=port, transport="sse"))
 
 
 def run_combined_server(port: int = 8000):
-    """Run both stdio and HTTP transports concurrently."""
+    """Run both stdio and HTTP streaming transports concurrently."""
     logger.info(f"Starting Smart Data Models MCP Server with combined transport on port {port}")
 
-    # This would run both transports - for now we'll just run HTTP
-    asyncio.run(mcp.run_sse_async(port=port))
+    # For combined mode, run HTTP streaming
+    asyncio.run(mcp.run_http_async(port=port, transport="streamable-http", path="/mcp"))
 
 
 def main():
@@ -584,8 +675,8 @@ def main():
     parser.add_argument(
         "--port",
         type=int,
-        default=int(os.getenv("MCP_HTTP_PORT", "8000")),
-        help="Port for HTTP/SSE transport (default: 8000)"
+        default=int(os.getenv("MCP_HTTP_PORT", "3200")),
+        help="Port for HTTP/SSE transport (default: 3200)"
     )
 
     args = parser.parse_args()
@@ -635,12 +726,18 @@ def main():
     transport = args.transport.lower()
     port = args.port
 
-    if transport in ["sse", "http"]:
-        logger.info(f"Starting Smart Data Models MCP Server with HTTP/SSE transport on port {port}")
+    if transport == "http":
+        logger.info(f"Starting Smart Data Models MCP Server with HTTP streaming transport on port {port}")
+        logger.info(f"Server will be accessible at: http://127.0.0.1:{port}/mcp")
         logger.info(f"Logs will be written to: {log_file}")
-        run_http_server(port)
+        run_http_streaming_server(port)
+    elif transport == "sse":
+        logger.info(f"Starting Smart Data Models MCP Server with SSE transport on port {port}")
+        logger.info(f"Logs will be written to: {log_file}")
+        run_sse_server(port)
     elif transport == "combined":
         logger.info(f"Starting Smart Data Models MCP Server with combined transport on port {port}")
+        logger.info(f"Server will be accessible at: http://127.0.0.1:{port}/mcp")
         logger.info(f"Logs will be written to: {log_file}")
         run_combined_server(port)
     else:  # stdio (default)
