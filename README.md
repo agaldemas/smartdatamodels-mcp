@@ -359,76 +359,113 @@ After configuration, restart Claude Desktop to load the MCP server. You can then
 
 ## MCP Tools
 
-### search_data_models
-Search for models across domains by name, attributes, or keywords.
-
-**Parameters:**
-- `query`: Search string
-- `domain`: Optional domain filter
-- `limit`: Maximum results (default: 20)
-- `include_attributes`: Include attribute details (default: false)
-
 ### list_domains
 List all available Smart Data Model domains.
 
-### list_models_in_domain
-List models within a specific domain.
+**Returns:** JSON string with available domains and count
+
+### list_subjects
+List all available Smart Data Model subjects.
+
+**Returns:** JSON string with available subjects and count
+
+### list_domain_subjects
+List all subjects belonging to a specific domain.
 
 **Parameters:**
-- `domain`: Domain name
-- `limit`: Maximum results (default: 50)
+- `domain`: The name of the domain to get subjects for
+
+**Returns:** JSON string with subjects in the domain and count
+
+### list_models_in_subject
+List all data models within a specific subject.
+
+**Parameters:**
+- `subject`: The name of the subject (e.g., 'dataModel.SmartCities', 'dataModel.Energy')
+
+**Returns:** JSON string with models in the subject and count
+
+### search_data_models
+Search for data models across subjects by name, attributes, or keywords.
+
+**Parameters:**
+- `query`: The search query (model name, attributes, or keywords)
+- `domain`: Optional domain filter (e.g., 'SmartCities')
+- `subject`: Optional subject filter (e.g., 'dataModel.User')
+- `include_attributes`: Whether to include attribute details in the results
+
+**Returns:** JSON string with search results, count, and query info
 
 ### get_model_details
-Get comprehensive information about a specific model.
+Get detailed information about a specific data model.
 
 **Parameters:**
-- `domain`: Domain name
-- `model`: Model name
+- `model`: The name of the model
+- `subject`: Optional subject name (e.g., 'dataModel.User')
+
+**Returns:** JSON string with model details including schema, examples, and metadata
 
 ### validate_against_model
 Validate data against a Smart Data Model schema.
 
 **Parameters:**
-- `domain`: Domain name
-- `model`: Model name
-- `data`: JSON data to validate
+- `model`: The name of the model
+- `data`: The data to validate (can be a JSON string or a dictionary)
+- `subject`: Optional subject name (e.g., 'dataModel.User')
+
+**Returns:** JSON string with validation results (currently always returns success)
 
 ### generate_ngsi_ld_from_json
-Generate NGSI-LD compliant entities from JSON data.
+Generate NGSI-LD compliant entities from arbitrary JSON data.
 
 **Parameters:**
-- `data`: Input JSON data
-- `entity_type`: Optional entity type
-- `entity_id`: Optional entity ID
-- `context`: Optional context URL
+- `data`: The input data (can be a JSON string or a dictionary)
+- `entity_type`: Optional NGSI-LD entity type
+- `entity_id`: Optional NGSI-LD entity ID
+- `context`: Optional Context URL for the NGSI-LD entity
+
+**Returns:** JSON string with generated NGSI-LD entity
 
 ### suggest_matching_models
-Find Smart Data Models that match your data structure.
+Suggest Smart Data Models that match provided data structure.
 
 **Parameters:**
-- `data`: Data to analyze
-- `top_k`: Number of suggestions (default: 5)
+- `data`: The data to analyze (can be a JSON string or a dictionary)
+
+**Returns:** JSON string with suggested models and similarity scores
 
 ## MCP Resources
 
-### Schema Access
-```
-sdm://SmartCities/WeatherObserved/schema.json
-sdm://Energy/SolarPanel/schema.json
-sdm://Building/Building/schema.json
-```
+### sdm://instructions
+Get this MCP server instructions and capabilities.
 
-### Example Access
-```
-sdm://SmartCities/WeatherObserved/examples.json
-sdm://Device/Device/examples.json
-```
+**Returns:** The MCP server instructions as plain text, containing detailed information about all available tools and resources for working with FIWARE Smart Data Models.
 
-### Context Access
-```
-sdm://SmartCities/context.jsonld
-sdm://Energy/context.jsonld
-```
+### sdm://{subject}/{model}/schema.json
+Get the JSON schema for a specific Smart Data Model.
+
+**Parameters:**
+- `subject`: Subject (must start with 'dataModel.')
+- `model`: Model name
+
+**Returns:** JSON schema as string
+
+### sdm://{subject}/{model}/examples/example.json
+Get example instances for a specific Smart Data Model.
+
+**Parameters:**
+- `subject`: Subject (must start with 'dataModel.')
+- `model`: Model name
+
+**Returns:** Examples as JSON string
+
+### sdm://{subject}/context.jsonld
+Get the JSON-LD context for a subject.
+
+**Parameters:**
+- `subject`: Subject (must start with 'dataModel.')
+
+**Returns:** JSON-LD context as string
 
 ## Technical Details
 
@@ -526,8 +563,8 @@ uv run pytest
 uv run pytest --cov=smart_data_models_mcp --cov-report=html
 
 # Run specific test files
+uv run pytest tests/test_mcp.py          # MCP server tools and resources tests
 uv run pytest tests/test_data_access.py  # Integration tests for data access layer
-uv run pytest tests/test_basic.py        # Unit tests for different modules
 
 # Run tests with verbose output
 uv run pytest -v tests/
@@ -545,8 +582,8 @@ pytest
 pytest --cov=smart_data_models_mcp --cov-report=html
 
 # Run specific test files
+pytest tests/test_mcp.py          # MCP server tools and resources tests
 pytest tests/test_data_access.py  # Integration tests for data access layer
-pytest tests/test_basic.py        # Unit tests for different modules
 
 # Run tests with verbose output
 pytest -v tests/
@@ -554,17 +591,26 @@ pytest -v tests/
 
 #### Test Files
 
-- **`tests/test_data_access.py`**: Comprehensive integration tests for the `SmartDataModelsAPI` class
-  - Tests domain and subject listing
-  - Tests model discovery and details retrieval
-  - Tests schema and example fetching
-  - Tests search functionality
-  - Validates API responses and caching behavior
+- **`tests/test_mcp.py`**: Comprehensive tests for MCP server tools and resources
+  - Tests all 9 MCP tools (list_domains, list_subjects, search_data_models, etc.)
+  - Tests all 4 MCP resources (instructions, schema, examples, context)
+  - Tests error handling and edge cases
+  - Validates JSON response formats and API integration
+  - Tests both successful operations and failure scenarios
 
-- **`tests/test_basic.py`**: Unit tests for individual modules
-  - Tests NGSI-LD generation logic
-  - Tests schema validation functionality
-  - Tests module imports and basic functionality
+- **`tests/test_data_access.py`**: Integration tests for the data access layer
+  - Tests SmartDataModelsAPI class functionality
+  - Tests domain and subject listing with GitHub API integration
+  - Tests model discovery, details retrieval, and caching
+  - Tests schema, example, and context fetching
+  - Tests search functionality with multiple strategies
+  - Validates API responses, error handling, and performance
+
+- **`tests/test_suggest_matching_models.py`**: Specialized tests for model suggestion functionality
+  - Tests similarity scoring and attribute matching
+  - Tests MCP server integration for model suggestions
+  - Validates suggestion ranking and response structure
+  - Tests edge cases and error handling
 
 #### Manual Testing
 
