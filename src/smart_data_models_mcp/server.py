@@ -209,6 +209,37 @@ async def list_subjects(
 
 
 @mcp.tool(exclude_args=["sessionId","toolCallId","action","chatInput"])
+async def list_domain_subjects(
+    domain: str = Field(..., description="The name of the domain to get subjects for"),
+    sessionId: Optional[str] = None,
+    action: Optional[str] = None,
+    chatInput: Optional[str] = None,
+    toolCallId: Optional[str] = None
+) -> str:
+    """List all subjects belonging to a specific domain.
+
+    Returns:
+        JSON string with subjects in the domain
+    """
+    try:
+        subjects = await data_api.list_domain_subjects(domain)
+
+        return json.dumps({
+            "success": True,
+            "domain": domain,
+            "subjects": subjects,
+            "count": len(subjects)
+        }, indent=2)
+
+    except Exception as e:
+        logger.error(f"List domain subjects failed: {e}")
+        return json.dumps({
+            "success": False,
+            "error": str(e),
+            "domain": domain
+        }, indent=2)
+
+@mcp.tool(exclude_args=["sessionId","toolCallId","action","chatInput"])
 async def list_models_in_subject(
     subject: Optional[str] = Field(None, description="The name of the subject (e.g., 'dataModel.SmartCities', 'dataModel.Energy')"),
     sessionId: Optional[str] = None,
@@ -241,6 +272,7 @@ async def list_models_in_subject(
             "error": str(e),
             "subject": subject
         }, indent=2)
+
 
 @mcp.tool(exclude_args=["sessionId","toolCallId","action","chatInput"])
 async def search_data_models(
@@ -461,88 +493,6 @@ async def suggest_matching_models(
         }, indent=2)
 
 
-@mcp.tool(exclude_args=["sessionId","toolCallId","action","chatInput"])
-async def list_domain_subjects(
-    domain: str = Field(..., description="The name of the domain to get subjects for"),
-    sessionId: Optional[str] = None,
-    action: Optional[str] = None,
-    chatInput: Optional[str] = None,
-    toolCallId: Optional[str] = None
-) -> str:
-    """List all subjects belonging to a specific domain.
-
-    Returns:
-        JSON string with subjects in the domain
-    """
-    try:
-        subjects = await data_api.list_domain_subjects(domain)
-
-        return json.dumps({
-            "success": True,
-            "domain": domain,
-            "subjects": subjects,
-            "count": len(subjects)
-        }, indent=2)
-
-    except Exception as e:
-        logger.error(f"List domain subjects failed: {e}")
-        return json.dumps({
-            "success": False,
-            "error": str(e),
-            "domain": domain
-        }, indent=2)
-
-
-@mcp.tool(exclude_args=["sessionId","toolCallId","action","chatInput"])
-async def health_check(
-    sessionId: Optional[str] = None,
-    action: Optional[str] = None,
-    chatInput: Optional[str] = None,
-    toolCallId: Optional[str] = None
-) -> str:
-    """Check the health status of the MCP server and its connections.
-
-    Returns:
-        JSON string with server health information
-    """
-    try:
-        import time
-        import psutil
-
-        # Basic health checks
-        health_info = {
-            "status": "healthy",
-            "timestamp": time.time(),
-            "server_info": {
-                "name": mcp.name,
-                "version": "1.0.0",
-                "transport": "Modern HTTP streaming enabled"
-            },
-            "data_cache": {
-                "initialized": True,
-                "domains_count": len(await data_api.list_domains()) if hasattr(data_api, 'list_domains') else 0,
-                "subjects_count": len(await data_api.list_subjects()) if hasattr(data_api, 'list_subjects') else 0
-            },
-            "system_info": {
-                "cpu_percent": psutil.cpu_percent(interval=0.1),
-                "memory_percent": psutil.virtual_memory().percent,
-                "uptime_seconds": time.time() - psutil.boot_time()
-            }
-        }
-
-        return json.dumps({
-            "success": True,
-            "health": health_info
-        }, indent=2)
-
-    except Exception as e:
-        logger.error(f"Health check failed: {e}")
-        return json.dumps({
-            "success": False,
-            "error": f"Health check failed: {str(e)}",
-            "status": "unhealthy"
-        }, indent=2)
-
 
 # Resource handlers
 @mcp.resource("sdm://instructions")
@@ -678,6 +628,12 @@ def main():
         default=int(os.getenv("MCP_HTTP_PORT", "3200")),
         help="Port for HTTP/SSE transport (default: 3200)"
     )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        default=os.getenv("MCP_DEBUG", "false").lower() == "true",
+        help="Enable debug logging (default: disabled)"
+    )
 
     args = parser.parse_args()
 
@@ -686,16 +642,19 @@ def main():
     os.makedirs(log_dir, exist_ok=True)
     log_file = os.path.join(log_dir, 'smart-data-models.log')
 
+    # Set logging level based on debug flag
+    log_level = logging.DEBUG if args.debug else logging.INFO
+
     root_logger = logging.getLogger()
     # Clear all existing handlers from the root logger
     for handler in root_logger.handlers[:]:
         root_logger.removeHandler(handler)
 
-    root_logger.setLevel(logging.INFO) # Set overall logging level
+    root_logger.setLevel(log_level) # Set overall logging level
 
     # Console handler
     console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setLevel(logging.INFO)
+    console_handler.setLevel(log_level)
     console_formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
     console_handler.setFormatter(console_formatter)
     root_logger.addHandler(console_handler)
@@ -718,6 +677,8 @@ def main():
     logger = logging.getLogger(__name__)
 
     # Initialize data before starting the server
+    if args.debug:
+        logger.info("DEBUG MODE ENABLED: Verbose logging activated")
     logger.info("Initializing data before starting server...")
     asyncio.run(initialize_data())
     logger.info("Data initialization complete.")

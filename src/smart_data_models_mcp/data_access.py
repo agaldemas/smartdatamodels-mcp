@@ -14,14 +14,16 @@ from urllib.parse import urljoin
 
 import requests
 from dotenv import load_dotenv
-from smart_data_models_mcp.github_repo_analyzer import EmbeddedGitHubAnalyzer
+from .github_repo_analyzer import EmbeddedGitHubAnalyzer
 
-try:
-    import pysmartdatamodels as psdm
-    PYSMARTDATAMODELS_AVAILABLE = True
-except ImportError:
-    psdm = None
-    PYSMARTDATAMODELS_AVAILABLE = False
+
+from pysmartdatamodels.pysmartdatamodels import (
+    list_all_subjects, datamodels_subject, attributes_datamodel,
+    description_attribute, datatype_attribute, ngsi_datatype_attribute,
+    units_attribute, model_attribute, ngsi_ld_example_generator,
+    subject_for_datamodel, list_datamodel_metadata, load_all_attributes,
+    list_all_datamodels
+)
 
 logger = logging.getLogger(__name__)
 
@@ -40,11 +42,14 @@ logger = logging.getLogger(__name__)
 # - list_datamodel_metadata(datamodel, subject)
 
 # Recent fixes applied:
-# ✓ Fix list_subjects to use psdm.list_all_subjects()
-# ✓ Fix list_models_in_subject to use psdm.datamodels_subject()
+# ✓ Fix list_subjects to use list_all_subjects()
+# ✓ Fix list_models_in_subject to use datamodels_subject()
 # ✓ Rewrite get_model_details with multiple psdm functions
 # ✓ Fix search to use comprehensive text search
 # ✓ Fix ngsi_ld_example_generator to use proper schema URL
+# ✓ Optimize search_models with GitHub Code Search-first strategy (performance improvement)
+# ✓ Enhance search with additional pysmartdatamodels functions (load_all_attributes, list_all_datamodels, subject_for_datamodel)
+# ✓ Fix non-existent load_all_datamodels function calls - replaced with available functions
 
 
 class Cache:
@@ -131,7 +136,12 @@ class SmartDataModelsAPI:
         """List all available domains."""
         logger.info("List Domains: Starting - using GitHub API to fetch domain list")
         cache_key = "domains"
-        # Force fresh fetch - skip cache entirely for debugging
+
+        # Try cache first
+        cached = self._cache.get(cache_key)
+        if cached:
+            logger.debug("List Domains: Returning cached data")
+            return cached
 
         # Fetch domains from GitHub organization repositories with pagination
         try:
@@ -165,7 +175,7 @@ class SmartDataModelsAPI:
                     page += 1  # Go to next page
                 else:
                     logger.error(f"GitHub API returned status {response.status_code} for {org_repos_url}")
-                    break
+                    raise Exception(f"GitHub API error: {response.status_code}")
 
             domains.sort()  # Sort for consistent ordering
             logger.info(f"List Domains: Retrieved {len(domains)} domains total from {page} pages")
@@ -180,8 +190,8 @@ class SmartDataModelsAPI:
         return self.KNOWN_DOMAINS
 
     async def list_subjects(self) -> List[str]:
-        """List all available subjects using GitHub API."""
-        logger.info("List Subjects: Starting - using GitHub API")
+        """List all available subjects using GitHub API with pysmartdatamodels fallback."""
+        logger.info("List Subjects: Starting - using GitHub API with pysmartdatamodels fallback")
         cache_key = "subjects"
         cached = self._cache.get(cache_key)
         if cached:
@@ -213,6 +223,27 @@ class SmartDataModelsAPI:
 
         except Exception as e:
             logger.error(f"GitHub API failed: {e}")
+            # Fallback to pysmartdatamodels
+            try:
+                logger.info("List Subjects: Falling back to pysmartdatamodels")
+                psdm_subjects = await self._run_sync_in_thread(list_all_subjects)
+                if psdm_subjects and isinstance(psdm_subjects, list):
+                    # Normalize subjects (remove dataModel. prefix if present)
+                    normalized_subjects = []
+                    for subject in psdm_subjects:
+                        if subject.startswith("dataModel."):
+                            normalized_subjects.append(subject[10:])  # Remove "dataModel." prefix
+                        else:
+                            normalized_subjects.append(subject)
+
+                    # Remove duplicates and sort
+                    normalized_subjects = list(set(normalized_subjects))
+                    normalized_subjects.sort()
+                    self._cache.set(cache_key, normalized_subjects)
+                    return normalized_subjects
+            except Exception as e:
+                logger.error(f"pysmartdatamodels fallback failed: {e}")
+
             # Return empty list as ultimate fallback
             return []
 
@@ -398,7 +429,11 @@ class SmartDataModelsAPI:
         subject: Optional[str] = None,
         include_attributes: bool = False
     ) -> List[Dict[str, Any]]:
-        """Search for models across subjects.
+        """Search for models across subjects using optimized strategy.
+
+        Performance optimization strategy:
+        1. First try GitHub Code Search API (fast, comprehensive, leverages GitHub's search infrastructure)
+        2. Fallback to pysmartdatamodels if no results found
 
         Args:
             query (str): The search query (model name, attributes, or keywords).
@@ -409,7 +444,7 @@ class SmartDataModelsAPI:
         Returns:
             List[Dict[str, Any]]: A list of dictionaries, each representing a matching data model.
         """
-        logger.info("Search Models: Starting - query='%s', domain='%s', subject='%s', include_attributes=%s - using comprehensive search", query, domain, subject, include_attributes)
+        logger.info("Search Models: Starting - query='%s', domain='%s', subject='%s', include_attributes=%s - using GitHub Code Search-first strategy", query, domain, subject, include_attributes)
         cache_key = f"search_{query}_{domain}_{subject}"
 
         # Try cache first
@@ -418,12 +453,778 @@ class SmartDataModelsAPI:
             logger.debug("Search Models: Returning cached data - %s results", len(cached) if cached else 0)
             return cached
 
-        # Perform comprehensive text search across subjects and models
-        results = await self._comprehensive_model_search(query, domain, subject, include_attributes)
+        # Use optimized GitHub Code Search-first strategy
+        results = await self._github_code_search_first_search(query, domain, subject, include_attributes)
 
         logger.info("Search Models: Search completed - %s results found", len(results) if results else 0)
         self._cache.set(cache_key, results)
         return results
+
+    async def _github_code_search_first_search(
+        self,
+        query: str,
+        domain: Optional[str] = None,
+        subject: Optional[str] = None,
+        include_attributes: bool = False
+    ) -> List[Dict[str, Any]]:
+        """Optimized search strategy: GitHub Code Search first, then pysmartdatamodels as fallback.
+
+        Performance optimization strategy:
+        1. Use GitHub Code Search API first (fast, comprehensive, leverages GitHub's search infrastructure)
+        2. Fallback to pysmartdatamodels if no results found
+        """
+        logger.info("GitHub Code Search-first search: query='%s', domain='%s', subject='%s'", query, domain, subject)
+
+        # Step 1: Try GitHub Code Search API first (fast, leverages GitHub's infrastructure)
+        github_results = await self._search_github_with_code_api(query, domain, subject, include_attributes)
+
+        if github_results:
+            logger.info("GitHub Code Search found %d results - returning without fallback", len(github_results))
+            return github_results
+
+        # Step 2: No results from GitHub Code Search, fallback to pysmartdatamodels
+        logger.info("No results from GitHub Code Search - falling back to pysmartdatamodels")
+        psdm_results = await self._pysmartdatamodels_first_search(query, domain, subject, include_attributes)
+
+        return psdm_results
+
+    async def _pysmartdatamodels_first_search(
+        self,
+        query: str,
+        domain: Optional[str] = None,
+        subject: Optional[str] = None,
+        include_attributes: bool = False
+    ) -> List[Dict[str, Any]]:
+        """Optimized search strategy: pysmartdatamodels first, then GitHub excluding existing models.
+
+        Performance optimization strategy:
+        1. Use pysmartdatamodels list_all_datamodels() and list_all_subjects() for fast local search
+        2. Filter results by query, domain, and subject criteria
+        3. Use additional pysmartdatamodels functions (load_all_attributes, subject_for_datamodel) as fallback
+        4. Only fallback to GitHub API if no results found, excluding models already in pysmartdatamodels
+        """
+        logger.info("PySmartDataModels-first search: query='%s', domain='%s', subject='%s'", query, domain, subject)
+
+        # Step 1: Try pysmartdatamodels first (fast, local data)
+        psdm_results = await self._search_with_pysmartdatamodels(query, domain, subject, include_attributes)
+
+        if psdm_results:
+            logger.info("PySmartDataModels search found %d results - returning without fallback", len(psdm_results))
+            return psdm_results
+
+        # Step 2: Try additional pysmartdatamodels functions as fallback
+        logger.info("No results from primary PySmartDataModels search - trying additional functions")
+        additional_psdm_results = await self._search_with_additional_pysmartdatamodels_functions(query, domain, subject, include_attributes)
+
+        if additional_psdm_results:
+            logger.info("Additional PySmartDataModels functions found %d results - returning without GitHub fallback", len(additional_psdm_results))
+            return additional_psdm_results
+
+        # Step 3: No results from pysmartdatamodels, fallback to GitHub but exclude existing models
+        logger.info("No results from PySmartDataModels functions - falling back to GitHub API (excluding existing models)")
+        github_results = await self._search_github_excluding_pysmartdatamodels(query, domain, subject, include_attributes)
+
+        return github_results
+
+    async def _search_with_additional_pysmartdatamodels_functions(
+        self,
+        query: str,
+        domain: Optional[str] = None,
+        subject: Optional[str] = None,
+        include_attributes: bool = False
+    ) -> List[Dict[str, Any]]:
+        """Search using additional pysmartdatamodels functions as fallback.
+
+        Uses load_all_attributes(), list_all_datamodels(), and subject_for_datamodel()
+        when primary pysmartdatamodels search doesn't find results.
+        """
+
+        try:
+            query_lower = query.lower()
+            results = []
+
+            # Strategy 1: Use load_all_attributes() for comprehensive attribute search
+            logger.debug("Additional PySmartDataModels: Trying load_all_attributes() for comprehensive attribute search")
+            try:
+                all_attributes = await self._run_sync_in_thread(load_all_attributes)
+
+                if all_attributes and isinstance(all_attributes, list):
+                    logger.debug(f"Additional PySmartDataModels: Found {len(all_attributes)} attributes to search through")
+
+                    # Group attributes by model for efficient processing
+                    model_matches = {}
+
+                    for attr in all_attributes:
+                        try:
+                            attr_repo = attr.get("repoName", "")
+                            attr_model = attr.get("dataModel", "")
+                            attr_name = attr.get("property", "").lower()
+                            attr_desc = attr.get("description", "").lower()
+
+                            # Check if attribute matches query
+                            if query_lower in attr_name or query_lower in attr_desc:
+                                model_key = f"{attr_repo}:{attr_model}"
+
+                                if model_key not in model_matches:
+                                    model_matches[model_key] = {
+                                        "subject": attr_repo,
+                                        "model": attr_model,
+                                        "matched_attributes": [],
+                                        "relevance_score": 0,
+                                        "matched_parts": []
+                                    }
+
+                                # Add attribute match
+                                model_matches[model_key]["matched_attributes"].append({
+                                    "name": attr.get("property", ""),
+                                    "description": attr.get("description", ""),
+                                    "type": attr.get("type", "string")
+                                })
+
+                                # Increase relevance score
+                                model_matches[model_key]["relevance_score"] += 1.5
+                                if "attributes" not in model_matches[model_key]["matched_parts"]:
+                                    model_matches[model_key]["matched_parts"].append("attributes")
+
+                        except Exception as e:
+                            logger.debug(f"Error processing attribute: {e}")
+                            continue
+
+                    # Convert model matches to results
+                    for model_key, match_data in model_matches.items():
+                        try:
+                            # Get model description using description_attribute
+                            description = await self._run_sync_in_thread(
+                                description_attribute,
+                                match_data["subject"],
+                                match_data["model"],
+                                "id"  # Use 'id' as it's always present
+                            )
+
+                            result = {
+                                "subject": match_data["subject"],
+                                "model": match_data["model"],
+                                "description": description or f"Smart Data Model for {match_data['model']}",
+                                "relevance_score": round(match_data["relevance_score"], 2),
+                                "matched_parts": match_data["matched_parts"],
+                                "source": "pysmartdatamodels_attributes"
+                            }
+
+                            if include_attributes and match_data["matched_attributes"]:
+                                result["attributes"] = match_data["matched_attributes"]
+
+                            results.append(result)
+
+                        except Exception as e:
+                            logger.debug(f"Error processing model match {model_key}: {e}")
+                            continue
+
+                    if results:
+                        logger.info(f"Additional PySmartDataModels: load_all_attributes() found {len(results)} results")
+                        results.sort(key=lambda x: x["relevance_score"], reverse=True)
+                        return results[:20]  # Limit results
+
+            except Exception as e:
+                logger.debug(f"load_all_attributes() search failed: {e}")
+
+            # Strategy 2: Use list_all_datamodels() for direct model name search
+            logger.debug("Additional PySmartDataModels: Trying list_all_datamodels() for direct model name search")
+            try:
+                all_models = await self._run_sync_in_thread(list_all_datamodels)
+
+                if all_models and isinstance(all_models, list):
+                    logger.debug(f"Additional PySmartDataModels: Found {len(all_models)} models to search through")
+
+                    for model_name in all_models:
+                        if query_lower in model_name.lower():
+                            # Try to find subject for this model
+                            try:
+                                subjects = await self._run_sync_in_thread(subject_for_datamodel, model_name)
+
+                                if subjects and isinstance(subjects, list):
+                                    for subject_name in subjects:
+                                        try:
+                                            # Get description
+                                            description = await self._run_sync_in_thread(
+                                                description_attribute, subject_name, model_name, "id"
+                                            )
+
+                                            result = {
+                                                "subject": subject_name,
+                                                "model": model_name,
+                                                "description": description or f"Smart Data Model for {model_name}",
+                                                "relevance_score": 3.0,  # High score for direct model name match
+                                                "matched_parts": ["name"],
+                                                "source": "pysmartdatamodels_models"
+                                            }
+
+                                            results.append(result)
+
+                                        except Exception as e:
+                                            logger.debug(f"Error processing model {subject_name}/{model_name}: {e}")
+                                            continue
+
+                            except Exception as e:
+                                logger.debug(f"subject_for_datamodel failed for {model_name}: {e}")
+                                continue
+
+                    if results:
+                        logger.info(f"Additional PySmartDataModels: list_all_datamodels() found {len(results)} results")
+                        results.sort(key=lambda x: x["relevance_score"], reverse=True)
+                        return results[:20]  # Limit results
+
+            except Exception as e:
+                logger.debug(f"list_all_datamodels() search failed: {e}")
+
+            # Strategy 3: Use subject_for_datamodel() for reverse lookup
+            logger.debug("Additional PySmartDataModels: Trying subject_for_datamodel() for reverse lookup")
+            try:
+                # Try to find if query might be a model name
+                subjects = await self._run_sync_in_thread(subject_for_datamodel, query)
+
+                if subjects and isinstance(subjects, list):
+                    logger.debug(f"Additional PySmartDataModels: subject_for_datamodel() found subjects: {subjects}")
+
+                    for subject_name in subjects:
+                        try:
+                            # Get description
+                            description = await self._run_sync_in_thread(
+                                description_attribute, subject_name, query, "id"
+                            )
+
+                            result = {
+                                "subject": subject_name,
+                                "model": query,
+                                "description": description or f"Smart Data Model for {query}",
+                                "relevance_score": 3.0,  # High score for exact model match
+                                "matched_parts": ["name"],
+                                "source": "pysmartdatamodels_reverse"
+                            }
+
+                            results.append(result)
+
+                        except Exception as e:
+                            logger.debug(f"Error processing reverse lookup result {subject_name}/{query}: {e}")
+                            continue
+
+                    if results:
+                        logger.info(f"Additional PySmartDataModels: subject_for_datamodel() found {len(results)} results")
+                        return results
+
+            except Exception as e:
+                logger.debug(f"subject_for_datamodel() search failed: {e}")
+
+            logger.info("Additional PySmartDataModels functions search completed - no results found")
+            return results
+
+        except Exception as e:
+            logger.warning(f"Additional PySmartDataModels functions search failed: {e}")
+            return []
+
+    async def _search_with_pysmartdatamodels(
+        self,
+        query: str,
+        domain: Optional[str] = None,
+        subject: Optional[str] = None,
+        include_attributes: bool = False
+    ) -> List[Dict[str, Any]]:
+        """Search using pysmartdatamodels local data (fast, no network calls).
+
+        Uses list_all_datamodels() and list_all_subjects() for comprehensive local search.
+        """
+
+        try:
+            # Get all model names for quick filtering
+            all_model_names = await self._run_sync_in_thread(list_all_datamodels)
+
+            if not all_model_names:
+                logger.debug("No model names found in pysmartdatamodels")
+                return []
+
+            results = []
+            query_lower = query.lower()
+
+            # Determine subjects to search
+            subjects_to_search = []
+            if subject:
+                # Use specific subject
+                normalized_subject = self._normalize_subject(subject)
+                subjects_to_search = [normalized_subject]
+            else:
+                # Search all subjects (domain filtering not supported without load_all_datamodels)
+                try:
+                    all_subjects = await self._run_sync_in_thread(list_all_subjects)
+                    subjects_to_search = all_subjects if all_subjects else []
+                except Exception as e:
+                    logger.debug(f"Failed to get subjects from pysmartdatamodels: {e}")
+                    subjects_to_search = []
+
+            logger.debug(f"Searching {len(subjects_to_search)} subjects from pysmartdatamodels")
+
+            # Search through each subject
+            for subject_name in subjects_to_search:
+                try:
+                    # Get models for this subject
+                    models_in_subject = await self._run_sync_in_thread(datamodels_subject, subject_name)
+
+                    if not models_in_subject:
+                        continue
+
+                    # Filter models by query
+                    for model_name in models_in_subject:
+                        if model_name in all_model_names:  # Safety check
+                            relevance_score = 0
+                            matched_parts = []
+
+                            # Check model name match
+                            if query_lower in model_name.lower():
+                                relevance_score += 3.0
+                                matched_parts.append("name")
+
+                            # Check subject match (if searching multiple subjects)
+                            if len(subjects_to_search) > 1 and query_lower in subject_name.lower():
+                                relevance_score += 1.5
+                                matched_parts.append("subject")
+
+                            # Get description if we have a potential match
+                            if relevance_score > 0:
+                                try:
+                                    description = await self._run_sync_in_thread(
+                                        description_attribute, subject_name, model_name, "id"
+                                    )
+                                    if description and query_lower in description.lower():
+                                        relevance_score += 1.0
+                                        matched_parts.append("description")
+                                except Exception:
+                                    pass  # Description lookup failed, continue
+
+                                # Get attributes if requested and we have a match
+                                attributes = []
+                                if include_attributes and relevance_score > 0:
+                                    try:
+                                        attr_names = await self._run_sync_in_thread(
+                                            attributes_datamodel, subject_name, model_name
+                                        )
+                                        if attr_names:
+                                            for attr_name in attr_names[:10]:  # Limit for performance
+                                                if query_lower in attr_name.lower():
+                                                    relevance_score += 1.5
+                                                    matched_parts.append("attributes")
+                                                attributes.append({
+                                                    "name": attr_name,
+                                                    "type": "string",  # Default, could be enhanced
+                                                    "description": ""
+                                                })
+                                    except Exception:
+                                        pass  # Attribute lookup failed, continue
+
+                                if relevance_score > 0:
+                                    model_info = {
+                                        "subject": subject_name,
+                                        "model": model_name,
+                                        "description": description or f"Smart Data Model for {model_name}",
+                                        "relevance_score": round(relevance_score, 2),
+                                        "matched_parts": matched_parts,
+                                        "source": "pysmartdatamodels"
+                                    }
+
+                                    if include_attributes and attributes:
+                                        model_info["attributes"] = attributes
+
+                                    results.append(model_info)
+
+                except Exception as e:
+                    logger.debug(f"Error searching subject {subject_name}: {e}")
+                    continue
+
+            # Sort by relevance score
+            results.sort(key=lambda x: x["relevance_score"], reverse=True)
+            logger.info(f"PySmartDataModels search found {len(results)} results")
+            return results
+
+        except Exception as e:
+            logger.warning(f"PySmartDataModels search failed: {e}")
+            return []
+
+    async def _search_github_with_code_api(
+        self,
+        query: str,
+        domain: Optional[str] = None,
+        subject: Optional[str] = None,
+        include_attributes: bool = False
+    ) -> List[Dict[str, Any]]:
+        """Search GitHub using the global code search API for efficient model discovery.
+
+        This method searches for each term in the query separately to improve search results,
+        then combines and deduplicates the findings.
+
+        Args:
+            query: Search query string
+            domain: Optional domain filter
+            subject: Optional subject filter
+            include_attributes: Whether to include attribute details
+
+        Returns:
+            List of model dictionaries with search results
+        """
+        try:
+            logger.info("GitHub Code Search: Starting - query='%s', domain='%s', subject='%s'", query, domain, subject)
+
+            # Split query into individual terms for separate searches
+            query_terms = [term.strip() for term in query.split() if term.strip()]
+            if not query_terms:
+                logger.warning("No valid query terms found")
+                return []
+
+            logger.debug(f"Searching for {len(query_terms)} individual terms: {query_terms}")
+
+            # Perform separate searches for each term
+            all_results = []
+            max_results_per_term = 30  # Limit per term to avoid overwhelming
+            per_page = 20  # Smaller page size for individual term searches
+
+            for term in query_terms:
+                logger.debug(f"Searching for term: '{term}'")
+                term_results = await self._search_single_term_github(term, domain, subject, include_attributes, max_results_per_term, per_page)
+                all_results.extend(term_results)
+
+            # Remove duplicates based on subject:model combination and aggregate relevance scores
+            model_aggregates = {}
+            for result in all_results:
+                key = f"{result['subject']}:{result['model']}"
+                if key not in model_aggregates:
+                    model_aggregates[key] = {
+                        "result": result,
+                        "term_matches": 1,
+                        "total_score": result["relevance_score"]
+                    }
+                else:
+                    # Aggregate scores for models found by multiple terms
+                    model_aggregates[key]["term_matches"] += 1
+                    model_aggregates[key]["total_score"] += result["relevance_score"]
+
+            # Convert back to results with adjusted scores
+            unique_results = []
+            for aggregate in model_aggregates.values():
+                result = aggregate["result"].copy()
+                term_matches = aggregate["term_matches"]
+                total_score = aggregate["total_score"]
+
+                # Boost score for models matching multiple terms
+                if term_matches > 1:
+                    result["relevance_score"] = round(total_score * (1 + 0.2 * (term_matches - 1)), 2)  # 20% boost per additional term match
+                    result["matched_terms"] = term_matches
+                else:
+                    result["relevance_score"] = round(total_score, 2)
+
+                unique_results.append(result)
+
+            # Sort by relevance score (descending)
+            unique_results.sort(key=lambda x: x["relevance_score"], reverse=True)
+
+            # Limit final results
+            max_final_results = 50
+            final_results = unique_results[:max_final_results]
+
+            logger.info(f"GitHub Code Search: Completed - searched {len(query_terms)} terms, found {len(final_results)} unique models")
+            return final_results
+
+        except Exception as e:
+            logger.error(f"GitHub code search failed: {e}")
+            return []
+
+    async def _search_single_term_github(
+        self,
+        term: str,
+        domain: Optional[str],
+        subject: Optional[str],
+        include_attributes: bool,
+        max_results: int,
+        per_page: int
+    ) -> List[Dict[str, Any]]:
+        """Search GitHub for a single term.
+
+        Args:
+            term: Single search term
+            domain: Optional domain filter
+            subject: Optional subject filter
+            include_attributes: Whether to include attribute details
+            max_results: Maximum results to return for this term
+            per_page: Results per page for GitHub API
+
+        Returns:
+            List of search results for this term
+        """
+        try:
+            # Build search query for GitHub API
+            search_query = f"org:{self.SMART_DATA_MODELS_ORG}"
+
+            # Add subject filter if specified
+            if subject:
+                # Normalize subject name
+                normalized_subject = self._normalize_subject(subject)
+                if normalized_subject.startswith("dataModel."):
+                    subject_short = normalized_subject[10:]  # Remove "dataModel." prefix
+                    search_query += f" repo:{self.SMART_DATA_MODELS_ORG}/dataModel.{subject_short}"
+
+            # Add the search term
+            search_query += f" {term}"
+
+            logger.debug(f"GitHub search query for term '{term}': {search_query}")
+
+            results = []
+
+            # GitHub search API pagination
+            page = 1
+
+            while len(results) < max_results:
+                try:
+                    # GitHub code search API endpoint
+                    search_url = "https://api.github.com/search/code"
+                    params = {
+                        "q": search_query,
+                        "type": "code",
+                        "per_page": min(per_page, max_results - len(results)),
+                        "page": page
+                    }
+
+                    response = await self._run_sync_in_thread(
+                        lambda: self._session.get(search_url, params=params, timeout=30)
+                    )
+
+                    if response.status_code == 403:
+                        logger.warning("GitHub API rate limit exceeded - consider using GITHUB_READ_TOKEN")
+                        break
+                    elif response.status_code != 200:
+                        logger.error(f"GitHub search API returned status {response.status_code}: {response.text}")
+                        break
+
+                    search_data = response.json()
+                    items = search_data.get("items", [])
+
+                    if not items:
+                        break  # No more results
+
+                    # Process search results for this term
+                    page_results = await self._process_github_search_results(items, term, include_attributes)
+                    results.extend(page_results)
+
+                    # Check if we have enough results or if there are more pages
+                    if len(results) >= max_results or len(items) < per_page:
+                        break
+
+                    page += 1
+
+                    # Safety check to avoid infinite loops
+                    if page > 5:  # Fewer pages per term
+                        logger.warning(f"GitHub search for term '{term}' exceeded 5 pages, stopping")
+                        break
+
+                except Exception as e:
+                    logger.error(f"Error during GitHub search API call for term '{term}' (page {page}): {e}")
+                    break
+
+            logger.debug(f"Found {len(results)} results for term '{term}'")
+            return results[:max_results]
+
+        except Exception as e:
+            logger.error(f"GitHub search failed for term '{term}': {e}")
+            return []
+
+    async def _process_github_search_results(
+        self,
+        search_items: List[Dict[str, Any]],
+        original_query: str,
+        include_attributes: bool
+    ) -> List[Dict[str, Any]]:
+        """Process GitHub search API results to extract model information.
+
+        Args:
+            search_items: List of items from GitHub search API response
+            original_query: The original search query for relevance scoring
+            include_attributes: Whether to include attribute details
+
+        Returns:
+            List of processed model results
+        """
+        results = []
+        query_lower = original_query.lower()
+        processed_models = set()  # Track processed models to avoid duplicates
+
+        for item in search_items:
+            try:
+                repo_info = item.get("repository", {})
+                repo_name = repo_info.get("name", "")
+
+                # Only process dataModel.* repositories
+                if not repo_name.startswith("dataModel."):
+                    continue
+
+                # Extract subject from repository name
+                subject = repo_name
+                if not subject.startswith("dataModel."):
+                    continue
+
+                # Extract model from path
+                path = item.get("path", "")
+                path_parts = path.split("/")
+
+                # Look for model directory in path (e.g., "TrafficFlowObserved/README.md" or "TrafficFlowObserved/schema.json")
+                model_name = None
+                if len(path_parts) >= 2:
+                    # Check if first part looks like a model directory
+                    potential_model = path_parts[0]
+                    if potential_model and not potential_model.startswith(".") and len(potential_model) > 2:
+                        model_name = potential_model
+
+                if not model_name:
+                    continue
+
+                # Skip if we've already processed this model in this batch
+                model_key = f"{subject}:{model_name}"
+                if model_key in processed_models:
+                    continue
+                processed_models.add(model_key)
+
+                # Get model details and file content for better matching
+                try:
+                    model_details = await self._get_basic_model_details_from_github(subject, model_name, subject)
+                    if not model_details:
+                        # Fallback: create basic model info
+                        model_details = {
+                            "subject": subject,
+                            "model": model_name,
+                            "description": f"Smart Data Model for {model_name}",
+                            "attributes": [],
+                            "source": f"github_code_search"
+                        }
+
+                    # Get file content to search for query terms - extract relative path within model directory
+                    # path format: "TrafficFlowObserved/README.md" -> relative_path: "README.md"
+                    # path format: "TrafficFlowObserved/doc/spec.md" -> relative_path: "doc/spec.md"
+                    # path format: "TrafficFlowObserved/examples/example.json" -> relative_path: "examples/example.json"
+                    if '/' in path:
+                        # Remove model name prefix to get relative path within model directory
+                        path_parts = path.split('/')
+                        if len(path_parts) > 1 and path_parts[0] == model_name:
+                            relative_path = '/'.join(path_parts[1:])
+                        else:
+                            # Fallback to just filename if path structure is unexpected
+                            relative_path = path_parts[-1]
+                    else:
+                        relative_path = path
+
+                    file_content = await self._get_file_content_from_github(subject, model_name, relative_path)
+                    content_lower = file_content.lower() if file_content else ""
+
+                    # Calculate relevance score based on query match
+                    relevance_score = 0
+                    matched_parts = []
+
+                    # Model name match
+                    if query_lower in model_name.lower():
+                        relevance_score += 3.0
+                        matched_parts.append("name")
+
+                    # Description match
+                    desc = model_details.get("description", "")
+                    if query_lower in desc.lower():
+                        relevance_score += 1.0
+                        matched_parts.append("description")
+
+                    # File content match (search in README, schema, etc.)
+                    if query_lower in content_lower:
+                        relevance_score += 2.0
+                        matched_parts.append("content")
+
+                    # Attribute matches
+                    if include_attributes:
+                        attributes = model_details.get("attributes", [])
+                        for attr in attributes:
+                            attr_name = attr.get("name", "").lower()
+                            attr_desc = attr.get("description", "").lower()
+                            if query_lower in attr_name or query_lower in attr_desc:
+                                relevance_score += 1.5
+                                matched_parts.append("attributes")
+                                break
+
+                    # Only include if there's some relevance
+                    if relevance_score > 0:
+                        model_result = {
+                            "subject": subject,
+                            "model": model_name,
+                            "description": model_details.get("description", ""),
+                            "relevance_score": round(relevance_score, 2),
+                            "matched_parts": matched_parts,
+                            "source": "github_code_search"
+                        }
+
+                        if include_attributes and model_details.get("attributes"):
+                            model_result["attributes"] = model_details["attributes"]
+
+                        results.append(model_result)
+
+                except Exception as e:
+                    logger.debug(f"Failed to get details for model {subject}/{model_name}: {e}")
+                    continue
+
+            except Exception as e:
+                logger.debug(f"Error processing search item: {e}")
+                continue
+
+        return results
+
+    async def _search_github_excluding_pysmartdatamodels(
+        self,
+        query: str,
+        domain: Optional[str] = None,
+        subject: Optional[str] = None,
+        include_attributes: bool = False
+    ) -> List[Dict[str, Any]]:
+        """Search GitHub API but exclude models that already exist in pysmartdatamodels.
+
+        This ensures we don't duplicate results and focus on potentially newer/missing models.
+        Uses GitHub's global code search API for efficiency instead of repo-by-repo enumeration.
+        """
+        try:
+            # Get list of models that already exist in pysmartdatamodels
+            existing_models = set()
+            try:
+                # Get all subjects and then get models for each subject
+                all_subjects = await self._run_sync_in_thread(list_all_subjects)
+                if all_subjects:
+                    for subject_name in all_subjects:
+                        try:
+                            models_in_subject = await self._run_sync_in_thread(datamodels_subject, subject_name)
+                            if models_in_subject:
+                                for model_name in models_in_subject:
+                                    existing_models.add(f"{subject_name}:{model_name}")
+                        except Exception as e:
+                            logger.debug(f"Failed to get models for subject {subject_name}: {e}")
+                            continue
+            except Exception as e:
+                logger.debug(f"Failed to get existing models from pysmartdatamodels: {e}")
+
+            logger.info(f"Excluding {len(existing_models)} existing models from GitHub search")
+
+            # Use new efficient GitHub code search API instead of comprehensive repo search
+            all_github_results = await self._search_github_with_code_api(query, domain, subject, include_attributes)
+
+            # Filter out models that already exist in pysmartdatamodels
+            filtered_results = []
+            for result in all_github_results:
+                model_key = f"{result['subject']}:{result['model']}"
+                if model_key not in existing_models:
+                    # Mark as GitHub-only result
+                    result["source"] = f"github (not in pysmartdatamodels)"
+                    filtered_results.append(result)
+
+            logger.info(f"GitHub search (excluding pysmartdatamodels) found {len(filtered_results)} additional results")
+            return filtered_results
+
+        except Exception as e:
+            logger.warning(f"GitHub search excluding pysmartdatamodels failed: {e}")
+            return []
 
     async def _comprehensive_model_search(
         self,
@@ -621,29 +1422,26 @@ class SmartDataModelsAPI:
 
         # Try pysmartdatamodels first (fastest)
         try:
-            if PYSMARTDATAMODELS_AVAILABLE:
-                from pysmartdatamodels import description_attribute, attributes_datamodel
+            # Get basic description
+            description = await self._run_sync_in_thread(
+                description_attribute, subject, model, "id"  # Use 'id' as it's always present
+            )
 
-                # Get basic description
-                description = await self._run_sync_in_thread(
-                    psdm.description_attribute, subject, model, "id"  # Use 'id' as it's always present
-                )
+            # Get attributes list (lightweight)
+            attributes = await self._run_sync_in_thread(attributes_datamodel, subject, model)
 
-                # Get attributes list (lightweight)
-                attributes = await self._run_sync_in_thread(attributes_datamodel, subject, model)
+            if attributes:
+                # Convert to lightweight format
+                light_attrs = [{"name": attr, "description": ""} for attr in attributes[:10]]  # Limit attributes
 
-                if attributes:
-                    # Convert to lightweight format
-                    light_attrs = [{"name": attr, "description": ""} for attr in attributes[:10]]  # Limit attributes
+                meta = {
+                    "description": description or f"Smart Data Model for {model}",
+                    "attributes": light_attrs,
+                    "source": "pysmartdatamodels"
+                }
 
-                    meta = {
-                        "description": description or f"Smart Data Model for {model}",
-                        "attributes": light_attrs,
-                        "source": "pysmartdatamodels"
-                    }
-
-                    self._cache.set(cache_key, meta)
-                    return meta
+                self._cache.set(cache_key, meta)
+                return meta
 
         except Exception as e:
             logger.debug(f"pysmartdatamodels meta failed for {subject}/{model}: {e}")
@@ -1099,6 +1897,40 @@ class SmartDataModelsAPI:
         self._cache.set(cache_key, details)
         return details
 
+    async def _get_file_content_from_github(self, subject: str, model: str, file_path: str) -> Optional[str]:
+        """Get the content of a specific file from GitHub repository.
+
+        Args:
+            subject: Subject name (may include 'dataModel.' prefix)
+            model: Model name
+            file_path: Path to the file within the model directory
+
+        Returns:
+            File content as string, or None if not found
+        """
+        try:
+            # Remove 'dataModel.' prefix if present to construct correct repo name
+            actual_subject = subject.replace('dataModel.', '') if subject.startswith('dataModel.') else subject
+            repo_name = f"dataModel.{actual_subject}"
+
+            # Construct the raw GitHub URL for the file
+            file_url = f"{self.GITHUB_RAW_BASE}/{self.SMART_DATA_MODELS_ORG}/{repo_name}/master/{model}/{file_path}"
+            logger.debug(f"Fetching file content from: {file_url}")
+
+            response = await self._run_sync_in_thread(
+                self._session.get, file_url, timeout=30
+            )
+
+            if response.status_code == 200:
+                return response.text
+            else:
+                logger.debug(f"File not found at {file_url} (status: {response.status_code})")
+                return None
+
+        except Exception as e:
+            logger.debug(f"Failed to get file content for {subject}/{model}/{file_path}: {e}")
+            return None
+
     async def _get_basic_model_details_from_github(self, subject: str, model: str, repo_subject: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Get basic model details from GitHub repository.
         repo_subject allows overriding the subject used for constructing the GitHub repository name.
@@ -1238,7 +2070,7 @@ class SmartDataModelsAPI:
             repo_name = f"dataModel.{actual_repo_subject}"
             schema_url = f"https://raw.githubusercontent.com/{self.SMART_DATA_MODELS_ORG}/{repo_name}/master/{model}/schema.json"
 
-            examples = await self._run_sync_in_thread(psdm.ngsi_ld_example_generator, schema_url)
+            examples = await self._run_sync_in_thread(ngsi_ld_example_generator, schema_url)
 
             if examples and examples != "dataModel" and examples != "False":
                 logger.info("Get Model Examples: pysmartdatamodels success for %s/%s - %s examples generated", subject, model, len(examples) if isinstance(examples, list) else 1)
@@ -1334,6 +2166,10 @@ class SmartDataModelsAPI:
             for attr in details["attributes"]:
                 if attr.get("required", False) or not details.get("required_attributes"):
                     attr_name = attr["name"]
+                    # Skip id and type as they are already set at the top level
+                    if attr_name in ["id", "type"]:
+                        continue
+
                     attr_type = attr.get("type", "string")
 
                     if attr_type == "string":
@@ -1411,7 +2247,15 @@ class SmartDataModelsAPI:
         }
 
     async def suggest_matching_models(self, data: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """Suggest models that match the provided data structure.
+        """Suggest models that match the provided data structure using enhanced matching algorithm.
+
+        Enhanced matching strategy:
+        1. Extract entity type from data for exact model name matching
+        2. Use weighted attribute matching (key attributes get higher weights)
+        3. Apply fuzzy matching for similar attribute names
+        4. Consider attribute types when available
+        5. Boost models with exact name matches to the data's "type" field
+        6. Return top matches with improved relevance scoring
 
         Args:
             data (Dict[str, Any]): The data structure (as a dictionary) to compare against models.
@@ -1425,19 +2269,295 @@ class SmartDataModelsAPI:
 
         data_keys = set(data.keys())
 
-        # Score models based on attribute overlap
+        # Early return for empty data - no meaningful matches possible
+        if not data_keys:
+            return []
+
+        logger.info("Suggest Matching Models: Using enhanced matching algorithm")
+
+        # Extract entity type for exact matching boost
+        entity_type = data.get("type", "").strip()
+        logger.debug(f"Entity type from data: '{entity_type}'")
+
+        # Get all subjects from pysmartdatamodels
+        all_subjects = await self._run_sync_in_thread(list_all_subjects)
+
+        if not all_subjects or not isinstance(all_subjects, list):
+            logger.warning("No subjects found in pysmartdatamodels")
+            return []
+
+        logger.debug(f"Found {len(all_subjects)} subjects in pysmartdatamodels")
+
+        candidates = []
+        max_candidates = 50  # Increased limit for better coverage
+        models_processed = 0
+
+        # Process subjects and their models
+        for subject in all_subjects:
+            if len(candidates) >= max_candidates:
+                break
+
+            try:
+                # Get all models for this subject
+                subject_models = await self._run_sync_in_thread(datamodels_subject, subject)
+
+                if not subject_models or not isinstance(subject_models, list):
+                    continue
+
+                logger.debug(f"Subject {subject}: {len(subject_models)} models")
+
+                # Process models in smaller batches for better performance
+                batch_size = 15  # Slightly larger batches
+                for i in range(0, len(subject_models), batch_size):
+                    if len(candidates) >= max_candidates:
+                        break
+
+                    batch = subject_models[i:i + batch_size]
+                    models_processed += len(batch)
+
+                    # Process batch concurrently for better performance
+                    batch_tasks = [
+                        self._enhanced_score_model_for_suggestion(model_name, subject, data, data_keys, entity_type)
+                        for model_name in batch
+                    ]
+
+                    batch_results = await asyncio.gather(*batch_tasks, return_exceptions=True)
+
+                    for result in batch_results:
+                        if isinstance(result, dict) and result.get("similarity", 0) > 0.05:  # Lower threshold
+                            candidates.append(result)
+                            if len(candidates) >= max_candidates:
+                                break
+
+            except Exception as e:
+                logger.debug(f"Error processing subject {subject}: {e}")
+                continue
+
+        # Sort by similarity (descending)
+        candidates.sort(key=lambda x: x["similarity"], reverse=True)
+
+        # Limit final results
+        final_results = candidates[:10]
+
+        logger.info(f"Suggest Matching Models: Processed {models_processed} models, found {len(final_results)} matching models")
+        return final_results
+
+    async def _enhanced_score_model_for_suggestion(self, model_name: str, subject: str, data: Dict[str, Any], data_keys: set, entity_type: str) -> Dict[str, Any]:
+        """Enhanced scoring for model suggestion with improved attribute matching and semantic analysis.
+
+        Args:
+            model_name: Name of the model to score
+            subject: Subject the model belongs to
+            data: Original input data dictionary
+            data_keys: Set of attribute names from the input data
+            entity_type: Entity type from data (for exact matching boost)
+
+        Returns:
+            Dict with model info and enhanced similarity score, or empty dict if no match
+        """
+        try:
+            # Get attributes for this model
+            model_attrs_list = await self._run_sync_in_thread(attributes_datamodel, subject, model_name)
+
+            if not model_attrs_list or not isinstance(model_attrs_list, list):
+                return {}
+
+            model_attrs = set(model_attrs_list)
+
+            # Initialize scoring components
+            base_similarity = 0
+            type_boost = 0
+            semantic_score = 0
+            fuzzy_score = 0
+
+            # 1. Exact type matching boost (highest priority)
+            if entity_type and model_name.lower() == entity_type.lower():
+                type_boost = 5.0  # Massive boost for exact type match
+                logger.debug(f"Exact type match boost: {model_name} matches '{entity_type}'")
+
+            # 2. Enhanced semantic matching for common attribute patterns
+            matched_count = 0
+            semantic_matches = self._calculate_semantic_matches(data_keys, model_attrs)
+            semantic_score = semantic_matches['score']
+            matched_count = semantic_matches['count']
+
+            # 3. Calculate base attribute overlap similarity (exact matches)
+            exact_overlap = len(data_keys.intersection(model_attrs))
+            total_attrs = len(model_attrs.union(data_keys))
+
+            if total_attrs == 0:
+                return {}
+
+            base_similarity = exact_overlap / total_attrs
+
+            # 4. Fuzzy matching with improved algorithm
+            fuzzy_matches = self._calculate_fuzzy_matches(data_keys, model_attrs)
+            fuzzy_score = fuzzy_matches * 0.3  # Reduced weight for fuzzy matches
+
+            # 5. Model name semantic matching (check if model name contains relevant keywords)
+            model_name_score = self._calculate_model_name_relevance(model_name, data_keys)
+            model_name_score *= 0.5  # Weight for model name relevance
+
+            # 6. Calculate final similarity score with improved weighting
+            final_similarity = (
+                base_similarity * 2.0 +      # Exact matches (highest weight)
+                type_boost +                 # Type matching boost
+                semantic_score +             # Semantic matches
+                fuzzy_score +                # Fuzzy matches
+                model_name_score             # Model name relevance
+            )
+
+            # Only return if there's reasonable similarity (lower threshold for enhanced algorithm)
+            if final_similarity > 0.1:  # Increased threshold for better quality
+                # Get description for the model
+                try:
+                    description = await self._run_sync_in_thread(
+                        description_attribute, subject, model_name, "id"
+                    )
+                    if not description:
+                        description = f"Smart Data Model for {model_name}"
+                except Exception:
+                    description = f"Smart Data Model for {model_name}"
+
+                return {
+                    "subject": subject,
+                    "model": model_name,
+                    "similarity": round(final_similarity, 3),
+                    "matched_attributes": matched_count,  # Use semantic matches count
+                    "total_attributes": len(model_attrs),
+                    "description": description,
+                    "source": "pysmartdatamodels"
+                }
+
+        except Exception as e:
+            logger.debug(f"Error in enhanced scoring for model {model_name}: {e}")
+
+        return {}
+
+    def _calculate_semantic_matches(self, data_keys: set, model_attrs: set) -> Dict[str, float]:
+        """Calculate semantic matches using common attribute patterns and synonyms."""
+        score = 0
+        matched_count = 0
+
+        # Define semantic groups for common attributes
+        semantic_groups = {
+            'temperature': {'temperature', 'temp', 'airTemperature', 'waterTemperature', 'soilTemperature'},
+            'humidity': {'humidity', 'relativeHumidity', 'airHumidity', 'moisture'},
+            'pressure': {'pressure', 'atmosphericPressure', 'barometricPressure', 'airPressure'},
+            'wind': {'windSpeed', 'windDirection', 'windGust', 'wind'},
+            'precipitation': {'precipitation', 'rain', 'rainfall', 'snow', 'hail'},
+            'location': {'location', 'position', 'coordinates', 'latitude', 'longitude', 'address'},
+            'time': {'dateObserved', 'timestamp', 'dateCreated', 'dateModified', 'time'},
+            'id': {'id', 'identifier', 'name', 'code'},
+            'type': {'type', 'category', 'class'}
+        }
+
+        for data_attr in data_keys:
+            data_attr_lower = data_attr.lower()
+
+            # Find which semantic group this attribute belongs to
+            matched_group = None
+            for group_name, synonyms in semantic_groups.items():
+                if data_attr_lower in synonyms or any(syn in data_attr_lower for syn in synonyms):
+                    matched_group = group_name
+                    break
+
+            if matched_group:
+                # Check if model has any attribute in the same semantic group
+                group_attrs = semantic_groups[matched_group]
+                model_has_match = any(
+                    any(synonym in model_attr.lower() for synonym in group_attrs)
+                    for model_attr in model_attrs
+                )
+
+                if model_has_match:
+                    score += 1.0  # Full point for semantic match
+                    matched_count += 1
+
+        return {'score': score, 'count': matched_count}
+
+    def _calculate_fuzzy_matches(self, data_keys: set, model_attrs: set) -> float:
+        """Calculate fuzzy matches using string similarity."""
+        fuzzy_score = 0
+
+        for data_attr in data_keys:
+            data_attr_lower = data_attr.lower()
+            best_match_score = 0
+
+            for model_attr in model_attrs:
+                model_attr_lower = model_attr.lower()
+
+                # Skip exact matches (already counted in base similarity)
+                if data_attr_lower == model_attr_lower:
+                    continue
+
+                # Calculate similarity score
+                if data_attr_lower in model_attr_lower or model_attr_lower in data_attr_lower:
+                    # Containment match
+                    match_score = 0.8
+                elif len(set(data_attr_lower) & set(model_attr_lower)) / len(set(data_attr_lower) | set(model_attr_lower)) > 0.6:
+                    # High character overlap
+                    match_score = 0.6
+                else:
+                    # Check for common prefixes/suffixes
+                    common_prefix = 0
+                    for i in range(1, min(len(data_attr_lower), len(model_attr_lower)) + 1):
+                        if data_attr_lower[:i] == model_attr_lower[:i]:
+                            common_prefix = i
+                        else:
+                            break
+
+                    if common_prefix >= 3:  # At least 3 characters in common prefix
+                        match_score = min(0.5, common_prefix / len(data_attr_lower))
+                    else:
+                        continue
+
+                best_match_score = max(best_match_score, match_score)
+
+            fuzzy_score += best_match_score
+
+        return fuzzy_score
+
+    def _calculate_model_name_relevance(self, model_name: str, data_keys: set) -> float:
+        """Calculate relevance based on model name containing data attribute keywords."""
+        model_lower = model_name.lower()
+        relevance_score = 0
+
+        # Keywords that suggest weather/environmental data
+        weather_keywords = {'weather', 'climate', 'meteorological', 'atmospheric', 'environmental', 'air', 'sensor'}
+
+        # Check if model name contains weather-related keywords
+        for keyword in weather_keywords:
+            if keyword in model_lower:
+                relevance_score += 0.5
+                break
+
+        # Check if model name contains data attribute names
+        for data_attr in data_keys:
+            if data_attr.lower() in model_lower:
+                relevance_score += 0.3
+
+        return relevance_score
+
+    async def _fallback_suggest_matching_models(self, data: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Fallback implementation using the original inefficient approach.
+
+        This method is kept for compatibility when pysmartdatamodels is not available.
+        """
+        logger.warning("Using fallback suggest_matching_models (inefficient GitHub scanning)")
+
+        data_keys = set(data.keys())
         candidates = []
 
+        # Original inefficient approach - scan all subjects and models
         subjects = await self.list_subjects()
 
-        for subject in subjects:
+        for subject in subjects[:10]:  # Limit subjects in fallback
             try:
-                # Normalize subject parameter
                 normalized_subject = self._normalize_subject(subject)
-
                 models = await self.list_models_in_subject(normalized_subject)
 
-                for model_name in models:
+                for model_name in models[:20]:  # Limit models per subject in fallback
                     try:
                         details = await self.get_model_details(subject, model_name)
 
@@ -1448,14 +2568,15 @@ class SmartDataModelsAPI:
 
                             if total_attrs > 0:
                                 similarity = overlap / total_attrs
-                                if similarity > 0.1:  # Only include reasonable matches
+                                if similarity > 0.1:
                                     candidates.append({
                                         "subject": subject,
                                         "model": model_name,
                                         "similarity": round(similarity, 3),
                                         "matched_attributes": overlap,
                                         "total_attributes": len(model_attrs),
-                                        "description": details.get("description", "")
+                                        "description": details.get("description", ""),
+                                        "source": "fallback_github"
                                     })
 
                     except Exception as e:
@@ -1466,6 +2587,5 @@ class SmartDataModelsAPI:
                 logger.debug(f"Error in subject {subject}: {e}")
                 continue
 
-        # Sort by similarity
         candidates.sort(key=lambda x: x["similarity"], reverse=True)
-        return candidates
+        return candidates[:10]
