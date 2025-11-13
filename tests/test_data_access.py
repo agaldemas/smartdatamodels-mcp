@@ -473,34 +473,16 @@ class TestSmartDataModelsAPI:
             assert examples[0]["id"] == "github_example"
 
         @pytest.mark.asyncio
-        async def test_get_model_examples_basic_generation_fallback(self, api_instance):
-            """Test basic example generation as ultimate fallback."""
-            # Mock all previous strategies to fail
+        async def test_get_model_examples_github_failure_raises_exception(self, api_instance):
+            """Test that exception is raised when GitHub fails."""
+            # Mock GitHub failure
             mock_response = MagicMock()
             mock_response.status_code = 404
             api_instance._session.get = MagicMock(return_value=mock_response)
             api_instance._run_sync_in_thread = AsyncMock(return_value=mock_response)
 
-            # Mock get_model_details for basic generation
-            api_instance.get_model_details = AsyncMock(return_value={
-                "attributes": [
-                    {"name": "id", "required": True},
-                    {"name": "type", "required": True},
-                    {"name": "temperature", "required": False}
-                ]
-            })
-
-            examples = await api_instance.get_model_examples("dataModel.Environment", "AirQualityObserved")
-
-            assert len(examples) == 1
-            example = examples[0]
-            assert "id" in example
-            assert example["id"] == "urn:ngsi-ld:AirQualityObserved:001"
-            assert example["type"] == "AirQualityObserved"
-            # Check that required attributes have the correct structure
-            assert "temperature" in example
-            assert isinstance(example["temperature"], dict)
-            assert "value" in example["temperature"]
+            with pytest.raises(ValueError, match="No examples found for model"):
+                await api_instance.get_model_examples("dataModel.Environment", "AirQualityObserved")
 
         @pytest.mark.asyncio
         async def test_get_model_examples_cache(self, api_instance):
@@ -517,22 +499,15 @@ class TestSmartDataModelsAPI:
         @pytest.mark.asyncio
         async def test_get_model_examples_subject_normalization(self, api_instance):
             """Test subject normalization in get_model_examples."""
-            # Mock all strategies to fail and reach basic generation
+            # Mock GitHub failure to raise exception
             mock_response = MagicMock()
             mock_response.status_code = 404
             api_instance._session.get = MagicMock(return_value=mock_response)
             api_instance._run_sync_in_thread = AsyncMock(return_value=mock_response)
 
-            api_instance.get_model_details = AsyncMock(return_value={
-                "attributes": [{"name": "id", "required": True}, {"name": "type", "required": True}]
-            })
-
-            # Test with subject without prefix
-            examples = await api_instance.get_model_examples("Environment", "AirQualityObserved")
-
-            assert len(examples) == 1
-            # Verify get_model_details was called with normalized subject
-            api_instance.get_model_details.assert_called_with("dataModel.Environment", "AirQualityObserved")
+            # Test with subject without prefix - should still raise exception
+            with pytest.raises(ValueError, match="No examples found for model"):
+                await api_instance.get_model_examples("Environment", "AirQualityObserved")
 
     class TestGetModelSchema:
         """Test get_model_schema functionality."""

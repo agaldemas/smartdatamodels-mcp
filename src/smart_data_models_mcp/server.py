@@ -547,7 +547,7 @@ async def get_model_schema(subject: str, model: str) -> str:
         }, indent=2)
 
 
-@mcp.resource("sdm://{subject}/{model}/examples.json")
+@mcp.resource("sdm://{subject}/{model}/examples/example.json")
 async def get_model_examples(subject: str, model: str) -> str:
     """Get example instances for a specific Smart Data Model.
 

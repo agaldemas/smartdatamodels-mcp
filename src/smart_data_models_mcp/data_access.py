@@ -444,6 +444,11 @@ class SmartDataModelsAPI:
         Returns:
             List[Dict[str, Any]]: A list of dictionaries, each representing a matching data model.
         """
+        # Reject empty queries directly without searching
+        if not query or not query.strip():
+            logger.warning("No valid query terms found")
+            return []
+
         logger.info("Search Models: Starting - query='%s', domain='%s', subject='%s', include_attributes=%s - using GitHub Code Search-first strategy", query, domain, subject, include_attributes)
         cache_key = f"search_{query}_{domain}_{subject}"
 
@@ -1583,7 +1588,7 @@ class SmartDataModelsAPI:
             raise ValueError(f"Failed to fetch schema for {actual_repo_subject}/{model}: {e}")
 
     async def get_model_examples(self, subject: str, model: str, repo_subject: Optional[str] = None) -> List[Dict[str, Any]]:
-        """Get example instances for a model.
+        """Get example instances for a model from the examples directory.
 
         Args:
             subject (str): The name of the subject the model belongs to.
@@ -1593,7 +1598,8 @@ class SmartDataModelsAPI:
         Returns:
             List[Dict[str, Any]]: A list of dictionaries, each representing an example instance of the model.
         """
-        logger.info("Get Model Examples: Starting - subject='%s', model='%s' - strategies: pysmartdatamodels -> GitHub -> generation", subject, model)
+        logger.info("Get Model Examples: Starting - subject='%s', model='%s'", subject, model)
+
         # Normalize subject parameter
         subject = self._normalize_subject(subject)
         repo_subject = self._normalize_subject(repo_subject)
@@ -1606,90 +1612,45 @@ class SmartDataModelsAPI:
             logger.debug("Get Model Examples: Returning cached data for %s/%s", subject, model)
             return cached
 
-        # Try pysmartdatamodels with schema URL (it requires a full schema URL, not subject/model)
-        try:
-            logger.debug("Get Model Examples: Attempting pysmartdatamodels for %s/%s", subject, model)
-            # Construct the schema URL first
-            actual_repo_subject = repo_subject if repo_subject else subject
-            repo_name = f"dataModel.{actual_repo_subject}"
-            schema_url = f"https://raw.githubusercontent.com/{self.SMART_DATA_MODELS_ORG}/{repo_name}/master/{model}/schema.json"
-
-            examples = await self._run_sync_in_thread(ngsi_ld_example_generator, schema_url)
-
-            if examples and examples != "dataModel" and examples != "False":
-                logger.info("Get Model Examples: pysmartdatamodels success for %s/%s - %s examples generated", subject, model, len(examples) if isinstance(examples, list) else 1)
-                if isinstance(examples, dict):
-                    examples = [examples]
-                elif isinstance(examples, list):
-                    examples = [examples] if examples else []
-
-                self._cache.set(cache_key, examples)
-                return examples
-
-        except Exception as e:
-            logger.debug(f"pysmartdatamodels examples failed for {subject}/{model}: {e}")
-            logger.info("Get Model Examples: pysmartdatamodels failed for %s/%s - trying GitHub", subject, model)
-
-        # Fallback: try to get from GitHub examples
-        try:
-            # Denormalize subject for GitHub API call (remove dataModel. prefix)
-            denormalized_subject = subject[10:] if subject.startswith("dataModel.") else subject
-            examples = await self._get_examples_from_github(denormalized_subject, model, repo_subject=None)
-            if examples:
-                logger.info("Get Model Examples: GitHub success for %s/%s - %s examples found", subject, model, len(examples))
-                self._cache.set(cache_key, examples)
-                return examples
-        except Exception as e:
-            logger.debug(f"GitHub examples failed for {subject}/{model}: {e}")
-            logger.info("Get Model Examples: GitHub failed for %s/%s - trying basic generation", subject, model)
-
-        # Ultimate fallback: generate basic example
-        example = await self._generate_basic_example(subject, model)
-        examples = [example] if example else []
+        # Get examples from GitHub examples directory
+        # Denormalize subject for GitHub API call (remove dataModel. prefix)
+        denormalized_subject = subject[10:] if subject.startswith("dataModel.") else subject
+        examples = await self._get_examples_from_github(denormalized_subject, model, repo_subject)
         if examples:
-            logger.info("Get Model Examples: Basic generation successful for %s/%s", subject, model)
-        else:
-            logger.warning(f"Get Model Examples: Basic generation failed for {subject}/{model} - no examples available")
+            logger.info("Get Model Examples: GitHub success for %s/%s - %s examples found", subject, model, len(examples))
+            self._cache.set(cache_key, examples)
+            return examples
 
-        self._cache.set(cache_key, examples)
-        return examples
+        # No examples found - raise exception instead of returning empty list
+        raise ValueError(f"No examples found for model {subject}/{model}")
 
     async def _get_examples_from_github(self, subject: str, model: str, repo_subject: Optional[str] = None) -> Optional[List[Dict[str, Any]]]:
-        """Get examples from GitHub repository.
-        repo_subject allows overriding the subject used for constructing the GitHub repository name.
-        """
+        """Get examples from GitHub repository by directly retrieving examples/example.json."""
         try:
             actual_repo_subject = repo_subject if repo_subject else subject
             repo_name = f"dataModel.{actual_repo_subject}"
-            # Try various common example file names
-            example_paths = [
-                "examples/example.json",
-                "examples/example.jsonld"
-            ]
+            example_url = f"{self.GITHUB_RAW_BASE}/{self.SMART_DATA_MODELS_ORG}/{repo_name}/master/{model}/examples/example.json"
 
-            for path in example_paths:
-                example_url = f"{self.GITHUB_RAW_BASE}/{self.SMART_DATA_MODELS_ORG}/{repo_name}/master/{model}/{path}"
-                logger.debug(f"Trying example URL: {example_url}")
-                try:
-                    response = await self._run_sync_in_thread(
-                        self._session.get, example_url, timeout=30
-                    )
-                    logger.debug(f"Response status for {example_url}: {response.status_code}")
+            response = await self._run_sync_in_thread(
+                self._session.get, example_url, timeout=30
+            )
 
-                    if response.status_code == 200:
-                        try:
-                            example = response.json()
-                            logger.info(f"Found valid example at {path}")
-                            return [example] if isinstance(example, dict) else example
-                        except json.JSONDecodeError as e:
-                            logger.debug(f"Failed to parse JSON from {example_url}: {e}")
-                            continue
-                except Exception as e:
-                    logger.debug(f"HTTP error for {example_url}: {e}")
-                    continue
+            if response.status_code == 200:
+                example = response.json()
+                # Ensure the example contains the "type" field with the model name
+                if isinstance(example, dict):
+                    if "type" not in example:
+                        example["type"] = model
+                    return [example]
+                elif isinstance(example, list):
+                    # Ensure each example in the list has the type field
+                    for ex in example:
+                        if isinstance(ex, dict) and "type" not in ex:
+                            ex["type"] = model
+                    return example
 
         except Exception as e:
-            logger.debug(f"GitHub examples fetch failed for {actual_repo_subject}/{model}: {e}")
+            pass
 
         return None
 
