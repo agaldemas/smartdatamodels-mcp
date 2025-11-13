@@ -50,6 +50,13 @@ mcp = FastMCP(
 - **Generate NGSI-LD Entities**: Convert raw JSON data into NGSI-LD compliant entities, facilitating interoperability within FIWARE ecosystems.
 - **Suggest Matching Models**: Recommend suitable Smart Data Models based on the structure and content of provided data.
 
+## Smart Data Models Hierarchy
+
+The FIWARE Smart Data Models are organized in a hierarchical structure:
+1. **Domains** contain subjects and represent high-level categories (e.g., SmartCities, Energy, Environment).
+2. Each **subject** is unique but can be referenced in multiple domains, following the naming convention `dataModel.SubjectName`.
+3. A subject repository contains the data models it defines, including their schemas, examples, and documentation.
+
 This server acts as a bridge, allowing AI agents to seamlessly integrate with and leverage the rich context provided by FIWARE Smart Data Models for various applications, including smart cities, energy management, environmental monitoring, and more.""",
     strict_input_validation=False
 )
