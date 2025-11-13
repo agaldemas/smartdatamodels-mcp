@@ -59,7 +59,23 @@ cd smart-data-models-mcp
 pip install -e .
 ```
 
+### Install from TestPyPI (current version: 0.1.1)
+```bash
+pip install --index-url https://test.pypi.org/simple/ smart-data-models-mcp
+```
+
+```bash
+uv tool install --index-url https://test.pypi.org/simple/ smart-data-models-mcp
+```
+
+**TestPyPI URL:** https://test.pypi.org/project/smart-data-models-mcp/0.1.1/
+
 ### Install from PyPI (when published)
+# Installation depuis PyPI
+```bash
+pip install smart-data-models-mcp
+```
+
 ```bash
 uv tool install smart-data-models-mcp
 ```
@@ -128,9 +144,21 @@ uv run python src/smart_data_models_mcp/server.py --transport sse --port 3200
 python src/smart_data_models_mcp/server.py --transport sse --port 3200
 ```
 
+#### Launch Server on Specific Port (HTTP Streamable Mode)
+
+To run the server in HTTP streamable mode on a specific port, use the following command:
+
+```bash
+# Using UV (recommended)
+uv run python src/smart_data_models_mcp/server.py --transport http --port 3210
+
+# Using pip
+python src/smart_data_models_mcp/server.py --transport http --port 3210
+```
+
 **Available command-line options:**
-- `--transport`: Transport mode (`stdio` or `sse`, default: `stdio`)
-- `--port`: Port number for SSE mode (default: 3200)
+- `--transport`: Transport mode (`stdio`, `sse`, or `http`, default: `stdio`)
+- `--port`: Port number for HTTP/SSE mode (default: 3200 for SSE, 3210 for HTTP)
 - `--host`: Host address (default: `127.0.0.1`)
 - `--help`: Show help message
 
@@ -143,8 +171,8 @@ uv run python src/smart_data_models_mcp/server.py
 # Run in SSE mode on port 3200
 uv run python src/smart_data_models_mcp/server.py --transport sse --port 3200
 
-
-uv run --active python src/smart_data_models_mcp/server.py --transport sse --port 3200
+# Run in HTTP streamable mode on port 3210
+uv run python src/smart_data_models_mcp/server.py --transport http --port 3210
 
 # Run in SSE mode on different host and port
 uv run python src/smart_data_models_mcp/server.py --transport sse --host 0.0.0.0 --port 8080
