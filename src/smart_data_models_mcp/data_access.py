@@ -806,7 +806,7 @@ class SmartDataModelsAPI:
                                             attributes_datamodel, subject_name, model_name
                                         )
                                         if attr_names:
-                                            for attr_name in attr_names[:10]:  # Limit for performance
+                                            for attr_name in attr_names:
                                                 if query_lower in attr_name.lower():
                                                     relevance_score += 1.5
                                                     matched_parts.append("attributes")
@@ -2247,15 +2247,20 @@ class SmartDataModelsAPI:
         }
 
     async def suggest_matching_models(self, data: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """Suggest models that match the provided data structure using enhanced matching algorithm.
+        """Suggest models that match the provided data structure using enhanced algorithm with GitHub pre-filtering.
 
-        Enhanced matching strategy:
-        1. Extract entity type from data for exact model name matching
-        2. Use weighted attribute matching (key attributes get higher weights)
-        3. Apply fuzzy matching for similar attribute names
-        4. Consider attribute types when available
-        5. Boost models with exact name matches to the data's "type" field
-        6. Return top matches with improved relevance scoring
+        Enhanced matching strategy with performance optimization:
+        1. Extract entity type and attribute names from input data
+        2. Use existing GitHub search functions to find models containing these attributes (fast pre-filtering)
+        3. For promising models, use pysmartdatamodels functions for detailed analysis:
+           - attributes_datamodel() for attribute lists
+           - description_attribute() for model descriptions
+           - subject_for_datamodel() for subject lookup
+           - load_all_attributes() for comprehensive attribute search
+        4. Apply enhanced semantic matching with weighted scoring
+        5. Return top matches with detailed similarity analysis
+
+        This approach avoids scanning all ~500+ models by pre-filtering with existing GitHub functions.
 
         Args:
             data (Dict[str, Any]): The data structure (as a dictionary) to compare against models.
@@ -2273,73 +2278,32 @@ class SmartDataModelsAPI:
         if not data_keys:
             return []
 
-        logger.info("Suggest Matching Models: Using enhanced matching algorithm")
+        logger.info("Suggest Matching Models: Using enhanced algorithm with GitHub pre-filtering")
 
         # Extract entity type for exact matching boost
         entity_type = data.get("type", "").strip()
         logger.debug(f"Entity type from data: '{entity_type}'")
 
-        # Get all subjects from pysmartdatamodels
-        all_subjects = await self._run_sync_in_thread(list_all_subjects)
+        # Step 1: Use existing GitHub search to pre-filter promising models
+        logger.info("Step 1: Pre-filtering models using existing GitHub functions")
+        candidate_models = await self._prefilter_models_with_existing_github(data_keys, entity_type)
 
-        if not all_subjects or not isinstance(all_subjects, list):
-            logger.warning("No subjects found in pysmartdatamodels")
-            return []
+        if not candidate_models:
+            logger.warning("No candidate models found via GitHub search, falling back to limited pysmartdatamodels search")
+            # Fallback: try some common subjects
+            candidate_models = await self._fallback_model_candidates(data_keys, entity_type)
 
-        logger.debug(f"Found {len(all_subjects)} subjects in pysmartdatamodels")
+        logger.info(f"Found {len(candidate_models)} candidate models for detailed analysis")
 
-        candidates = []
-        max_candidates = 50  # Increased limit for better coverage
-        models_processed = 0
+        # Step 2: Detailed analysis of candidate models using pysmartdatamodels
+        logger.info("Step 2: Detailed analysis using pysmartdatamodels functions")
+        detailed_results = await self._analyze_candidate_models(candidate_models, data, data_keys, entity_type)
 
-        # Process subjects and their models
-        for subject in all_subjects:
-            if len(candidates) >= max_candidates:
-                break
+        # Step 3: Sort by similarity and return top results
+        detailed_results.sort(key=lambda x: x["similarity"], reverse=True)
+        final_results = detailed_results[:10]
 
-            try:
-                # Get all models for this subject
-                subject_models = await self._run_sync_in_thread(datamodels_subject, subject)
-
-                if not subject_models or not isinstance(subject_models, list):
-                    continue
-
-                logger.debug(f"Subject {subject}: {len(subject_models)} models")
-
-                # Process models in smaller batches for better performance
-                batch_size = 15  # Slightly larger batches
-                for i in range(0, len(subject_models), batch_size):
-                    if len(candidates) >= max_candidates:
-                        break
-
-                    batch = subject_models[i:i + batch_size]
-                    models_processed += len(batch)
-
-                    # Process batch concurrently for better performance
-                    batch_tasks = [
-                        self._enhanced_score_model_for_suggestion(model_name, subject, data, data_keys, entity_type)
-                        for model_name in batch
-                    ]
-
-                    batch_results = await asyncio.gather(*batch_tasks, return_exceptions=True)
-
-                    for result in batch_results:
-                        if isinstance(result, dict) and result.get("similarity", 0) > 0.05:  # Lower threshold
-                            candidates.append(result)
-                            if len(candidates) >= max_candidates:
-                                break
-
-            except Exception as e:
-                logger.debug(f"Error processing subject {subject}: {e}")
-                continue
-
-        # Sort by similarity (descending)
-        candidates.sort(key=lambda x: x["similarity"], reverse=True)
-
-        # Limit final results
-        final_results = candidates[:10]
-
-        logger.info(f"Suggest Matching Models: Processed {models_processed} models, found {len(final_results)} matching models")
+        logger.info(f"Suggest Matching Models: Analyzed {len(candidate_models)} models, found {len(final_results)} matching models")
         return final_results
 
     async def _enhanced_score_model_for_suggestion(self, model_name: str, subject: str, data: Dict[str, Any], data_keys: set, entity_type: str) -> Dict[str, Any]:
@@ -2419,7 +2383,7 @@ class SmartDataModelsAPI:
                 except Exception:
                     description = f"Smart Data Model for {model_name}"
 
-                return {
+                result = {
                     "subject": subject,
                     "model": model_name,
                     "similarity": round(final_similarity, 3),
@@ -2429,6 +2393,10 @@ class SmartDataModelsAPI:
                     "source": "pysmartdatamodels"
                 }
 
+                logger.debug(f"Enhanced scoring result for {subject}/{model_name}: similarity={result['similarity']}, base={base_similarity:.3f}, type_boost={type_boost}, semantic={semantic_score:.3f}, fuzzy={fuzzy_score:.3f}, model_name={model_name_score:.3f}")
+
+                return result
+
         except Exception as e:
             logger.debug(f"Error in enhanced scoring for model {model_name}: {e}")
 
@@ -2437,7 +2405,7 @@ class SmartDataModelsAPI:
     def _calculate_semantic_matches(self, data_keys: set, model_attrs: set) -> Dict[str, float]:
         """Calculate semantic matches using common attribute patterns and synonyms."""
         score = 0
-        matched_count = 0
+        matched_groups = set()
 
         # Define semantic groups for common attributes
         semantic_groups = {
@@ -2452,29 +2420,28 @@ class SmartDataModelsAPI:
             'type': {'type', 'category', 'class'}
         }
 
+        # Find which semantic groups are present in the data
+        data_groups = set()
         for data_attr in data_keys:
             data_attr_lower = data_attr.lower()
-
-            # Find which semantic group this attribute belongs to
-            matched_group = None
             for group_name, synonyms in semantic_groups.items():
                 if data_attr_lower in synonyms or any(syn in data_attr_lower for syn in synonyms):
-                    matched_group = group_name
+                    data_groups.add(group_name)
                     break
 
-            if matched_group:
-                # Check if model has any attribute in the same semantic group
-                group_attrs = semantic_groups[matched_group]
-                model_has_match = any(
-                    any(synonym in model_attr.lower() for synonym in group_attrs)
-                    for model_attr in model_attrs
-                )
+        # For each semantic group present in data, check if model has matching attributes
+        for group_name in data_groups:
+            group_attrs = semantic_groups[group_name]
+            model_has_match = any(
+                any(synonym in model_attr.lower() for synonym in group_attrs)
+                for model_attr in model_attrs
+            )
 
-                if model_has_match:
-                    score += 1.0  # Full point for semantic match
-                    matched_count += 1
+            if model_has_match:
+                score += 1.0  # One point per matched semantic group
+                matched_groups.add(group_name)
 
-        return {'score': score, 'count': matched_count}
+        return {'score': score, 'count': len(matched_groups)}
 
     def _calculate_fuzzy_matches(self, data_keys: set, model_attrs: set) -> float:
         """Calculate fuzzy matches using string similarity."""
@@ -2538,6 +2505,111 @@ class SmartDataModelsAPI:
                 relevance_score += 0.3
 
         return relevance_score
+
+    async def _prefilter_models_with_existing_github(self, data_keys: set, entity_type: str) -> List[Tuple[str, str]]:
+        """Pre-filter models using existing GitHub functions to find promising candidates.
+
+        Uses existing GitHub functions like _get_basic_model_details_from_github and
+        _get_file_content_from_github to efficiently find models that might match the data.
+        """
+        candidates = []
+        processed_models = set()
+
+        # Strategy 1: Search for models containing the entity type in their name
+        if entity_type:
+            logger.debug(f"Searching for models with entity type: {entity_type}")
+            # Get some common subjects to search in
+            try:
+                subjects = await self.list_subjects()
+                # Limit to first few subjects for performance
+                for subject in subjects[:5]:
+                    try:
+                        models = await self.list_models_in_subject(subject)
+                        for model_name in models:
+                            if entity_type.lower() in model_name.lower():
+                                if (subject, model_name) not in processed_models:
+                                    candidates.append((subject, model_name))
+                                    processed_models.add((subject, model_name))
+                    except Exception as e:
+                        logger.debug(f"Error searching subject {subject}: {e}")
+                        continue
+            except Exception as e:
+                logger.debug(f"Error getting subjects: {e}")
+
+        # Strategy 2: Search for models containing data attribute names using existing GitHub functions
+        for attr in data_keys:
+            if len(attr) < 3:  # Skip very short attribute names
+                continue
+
+            logger.debug(f"Searching for models containing attribute: {attr}")
+            # Use existing GitHub functions to find models with this attribute
+            # Get some subjects and check their models
+            try:
+                subjects = await self.list_subjects()
+                for subject in subjects[:3]:  # Limit subjects for performance
+                    try:
+                        models = await self.list_models_in_subject(subject)
+                        for model_name in models[:10]:  # Limit models per subject
+                            if (subject, model_name) in processed_models:
+                                continue
+
+                            # Use existing GitHub function to get model details
+                            try:
+                                details = await self._get_basic_model_details_from_github(subject, model_name)
+                                if details and details.get("attributes"):
+                                    model_attrs = {attr_info["name"] for attr_info in details["attributes"]}
+                                    if attr in model_attrs:
+                                        candidates.append((subject, model_name))
+                                        processed_models.add((subject, model_name))
+                            except Exception as e:
+                                logger.debug(f"Error checking model {subject}/{model_name}: {e}")
+                                continue
+                    except Exception as e:
+                        logger.debug(f"Error in subject {subject}: {e}")
+                        continue
+            except Exception as e:
+                logger.debug(f"Error getting subjects for attribute {attr}: {e}")
+
+        # Remove duplicates (shouldn't be any due to processed_models set, but just in case)
+        unique_candidates = list(set(candidates))
+
+        logger.info(f"GitHub pre-filtering found {len(unique_candidates)} candidate models")
+        return unique_candidates
+
+    async def _analyze_candidate_models(self, candidate_models: List[Tuple[str, str]], data: Dict[str, Any], data_keys: set, entity_type: str) -> List[Dict[str, Any]]:
+        """Analyze candidate models using pysmartdatamodels for detailed scoring."""
+        results = []
+
+        for subject, model_name in candidate_models:
+            try:
+                result = await self._enhanced_score_model_for_suggestion(model_name, subject, data, data_keys, entity_type)
+                if result:
+                    results.append(result)
+            except Exception as e:
+                logger.debug(f"Error analyzing candidate model {subject}/{model_name}: {e}")
+                continue
+
+        return results
+
+    async def _fallback_model_candidates(self, data_keys: set, entity_type: str) -> List[Tuple[str, str]]:
+        """Fallback method to generate some candidate models when GitHub search fails."""
+        candidates = []
+
+        # Try some common subjects that might contain weather/environmental data
+        common_subjects = ["dataModel.Environment", "dataModel.Weather", "dataModel.Sensor"]
+
+        for subject in common_subjects:
+            try:
+                models = await self.list_models_in_subject(subject)
+                # Add first few models from each subject
+                for model_name in models[:5]:
+                    candidates.append((subject, model_name))
+            except Exception as e:
+                logger.debug(f"Error getting models for subject {subject}: {e}")
+                continue
+
+        logger.info(f"Fallback generated {len(candidates)} candidate models")
+        return candidates
 
     async def _fallback_suggest_matching_models(self, data: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Fallback implementation using the original inefficient approach.
