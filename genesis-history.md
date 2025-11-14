@@ -194,7 +194,7 @@ The project has evolved into a comprehensive Smart Data Models ecosystem with ad
 
 - ✅ **Advanced Server Architecture**: Multi-transport support (stdio, SSE, HTTP streaming) with middleware system
 - ✅ **Optimized Data Access Layer**: GitHub Code Search-first strategy with intelligent caching and fallback mechanisms
-- ✅ **Specialized Tools**: FastMCP documentation server and Mistral AI agent integration examples
+- ✅ **Specialized Tools**: FastMCP documentation server AI agent integration examples
 - ✅ **Enhanced Quality Assurance**: Selective validation, comprehensive error handling, and monitoring capabilities
 - ✅ **Export Ecosystem**: Organized documentation repository with workflow diagrams and integration guides
 - ✅ **Production-Ready Features**: Rate limiting, token management, health checks, and enterprise-grade deployment options
@@ -406,8 +406,8 @@ This phase dramatically improved search performance, reliability, and user exper
 
 **Tool Ecosystem Expansion:** Introduction of specialized MCP servers and integration examples for enhanced functionality.
 
-**Mistral AI Agent Integration:**
-- **Agent Configuration**: Complete setup for Mistral AI agents with Smart Data Models access
+**AI Agents Integration:**
+- **Agent Configuration**: Complete setup for AI agents with Smart Data Models access
 - **Prompt Engineering**: Optimized prompts for FIWARE data model interactions
 - **Use Cases**: Real-world examples of AI agent integration with IoT data models
 

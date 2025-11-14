@@ -9,6 +9,7 @@ __pycache__/
 logs/
 # exports
 exports/
+mistral/
 # Virtual environments
 .venv/
 venv/
