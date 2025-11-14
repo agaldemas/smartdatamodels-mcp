@@ -78,7 +78,7 @@ smart-data-models-mcp/
 │       └── server.py
 └── tests/                 # Comprehensive test suite
     ├── __init__.py
-    ├── test_basic.py      # Unit tests for modules
+    ├── test_mcp.py      # Unit tests for modules
     └── test_data_access.py # Integration tests
 ```
 

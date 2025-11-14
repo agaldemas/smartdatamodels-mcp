@@ -94,7 +94,7 @@ The initial commit was a massive implementation (2,469 insertions across 11 file
   - Clean separation of concerns: data access, validation, generation, and MCP server logic
 
 - **Testing Foundation**:
-  - Basic test suite in `tests/test_basic.py` (174 lines)
+  - Basic test suite in `tests/test_mcp.py` (174 lines)
   - Framework for both unit and integration testing
 
 - **MCP Server Skeleton**:
@@ -270,7 +270,7 @@ This phase resolved documentation inconsistencies and established comprehensive 
 - ✅ **`uv sync --all-extras`** - Successfully installs dev/test dependencies (installed pytest, ruff, black, mypy, coverage)
 - ✅ **`uv run pytest`** - All tests pass (7/7 tests successful in 6.04 seconds)
 - ✅ **`uv run pytest --cov=smart_data_models_mcp --cov-report=html`** - Coverage reports generated successfully (7/7 tests, HTML reports created)
-- ✅ **`uv run pytest tests/test_basic.py`** - Individual test file execution works through pytest
+- ✅ **`uv run pytest tests/test_mcp.py`** - Individual test file execution works through pytest
 - ❌ **`uv run python tests/test_data_access.py`** - Direct python execution fails due to import path issues
 
 **Documentation Corrections Applied:**
