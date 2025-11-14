@@ -2,9 +2,13 @@
 __pycache__/
 *.pyc
 *.log
+*.log.*
 *.pid
 .env
-
+# logs
+logs/
+# exports
+exports/
 # Virtual environments
 .venv/
 venv/
@@ -18,6 +22,7 @@ uv.lock
 # IDE-specific files (if any, common ones)
 .vscode/
 .idea/
+
 
 # Operating System files
 .DS_Store
