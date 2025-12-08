@@ -109,6 +109,74 @@ For optimal performance and to avoid rate limiting, you can configure a GitHub p
 
 The server automatically loads the token from the `.env` file or environment variables and uses it for GitHub API requests. If no token is provided, requests will work but may be rate-limited.
 
+### Environment Variables
+
+The server can be configured using environment variables, which is especially useful for containerized deployments or when you want to avoid command-line arguments.
+
+#### Available Environment Variables
+
+| Variable | Description | Default | Example |
+|----------|-------------|---------|---------|
+| `GITHUB_READ_TOKEN` | GitHub personal access token for API requests | None | `ghp_your_token_here` |
+| `MCP_TRANSPORT` | Transport mode (`stdio`, `sse`, `http`, `combined`) | `stdio` | `sse` |
+| `MCP_HTTP_PORT` | Port number for HTTP/SSE transport | `3200` | `8080` |
+| `MCP_DEBUG` | Enable debug logging (`true`/`false`) | `false` | `true` |
+
+#### Configuration Methods
+
+**1. Using `.env` file (Recommended for local development):**
+
+Create a `.env` file in your project root directory:
+
+```env
+# GitHub API Configuration
+GITHUB_READ_TOKEN=ghp_your_token_here
+
+# Server Configuration
+MCP_TRANSPORT=sse
+MCP_HTTP_PORT=3200
+MCP_DEBUG=false
+```
+
+**2. Using System Environment Variables:**
+
+```bash
+# macOS/Linux
+export GITHUB_READ_TOKEN=ghp_your_token_here
+export MCP_TRANSPORT=sse
+export MCP_HTTP_PORT=3200
+export MCP_DEBUG=true
+
+# Windows (PowerShell)
+$env:GITHUB_READ_TOKEN="ghp_your_token_here"
+$env:MCP_TRANSPORT="sse"
+$env:MCP_HTTP_PORT="3200"
+$env:MCP_DEBUG="true"
+```
+
+**3. Using MCP Client Configuration:**
+
+You can also pass environment variables through your MCP client configuration:
+
+```json
+{
+  "mcpServers": {
+    "smart-data-models": {
+      "command": "python",
+      "args": ["src/smart_data_models_mcp/server.py"],
+      "cwd": "/path/to/smartdatamodels-mcp",
+      "env": {
+        "GITHUB_READ_TOKEN": "ghp_your_token_here",
+        "MCP_TRANSPORT": "stdio",
+        "MCP_DEBUG": "false"
+      }
+    }
+  }
+}
+```
+
+**Note:** Command-line arguments take precedence over environment variables. For example, `--transport http` will override `MCP_TRANSPORT=sse`.
+
 ### Logging Configuration
 
 The server writes detailed logs to help with troubleshooting and monitoring. Log files are automatically created in the project's `logs/` directory:
@@ -199,12 +267,12 @@ To configure the smart-data-models-mcp server for use with Cline, add the follow
 
 **Location:** `~/Library/Application Support/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json`
 
+**Basic Configuration:**
 ```json
 {
   "mcpServers": {
     "smart-data-models": {
-      "autoApprove": [
-      ],
+      "autoApprove": [],
       "disabled": false,
       "timeout": 60,
       "type": "stdio",
@@ -212,11 +280,60 @@ To configure the smart-data-models-mcp server for use with Cline, add the follow
       "args": [
         "src/smart_data_models_mcp/server.py"
       ],
-      "cwd": "/Users/alaingaldemas/Documents/mcp/smartdatamodels-mcp/src"
+      "cwd": "/path/to/smartdatamodels-mcp/src"
     }
   }
 }
 ```
+
+**With Environment Variables:**
+```json
+{
+  "mcpServers": {
+    "smart-data-models": {
+      "autoApprove": [],
+      "disabled": false,
+      "timeout": 60,
+      "type": "stdio",
+      "command": "python3",
+      "args": [
+        "src/smart_data_models_mcp/server.py"
+      ],
+      "cwd": "/path/to/smartdatamodels-mcp/src",
+      "env": {
+        "GITHUB_READ_TOKEN": "ghp_your_token_here",
+        "MCP_DEBUG": "false"
+      }
+    }
+  }
+}
+```
+
+**Using UV (Recommended):**
+```json
+{
+  "mcpServers": {
+    "smart-data-models": {
+      "autoApprove": [],
+      "disabled": false,
+      "timeout": 60,
+      "type": "stdio",
+      "command": "uv",
+      "args": [
+        "run",
+        "python",
+        "src/smart_data_models_mcp/server.py"
+      ],
+      "cwd": "/path/to/smartdatamodels-mcp",
+      "env": {
+        "GITHUB_READ_TOKEN": "ghp_your_token_here"
+      }
+    }
+  }
+}
+```
+
+**Note:** Replace `/path/to/smartdatamodels-mcp` with the actual path to your project directory.
 
 #### HTTP Streamable Mode
 ```json
@@ -239,20 +356,56 @@ If you prefer to use the server with Claude Desktop, add the following to your C
 
 **macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
 **Windows:** `%APPDATA%/Claude/claude_desktop_config.json`
+**Linux:** `~/.config/Claude/claude_desktop_config.json`
 
+**Basic Configuration:**
 ```json
 {
   "mcpServers": {
     "smart-data-models": {
       "command": "python",
       "args": ["src/smart_data_models_mcp/server.py"],
-      "cwd": "<path>//smartdatamodels-mcp",
+      "cwd": "/path/to/smartdatamodels-mcp",
       "env": {}
     }
   }
 }
 ```
-**Note: this configuration remains to verify**
+
+**With Environment Variables:**
+```json
+{
+  "mcpServers": {
+    "smart-data-models": {
+      "command": "python",
+      "args": ["src/smart_data_models_mcp/server.py"],
+      "cwd": "/path/to/smartdatamodels-mcp",
+      "env": {
+        "GITHUB_READ_TOKEN": "ghp_your_token_here",
+        "MCP_DEBUG": "false"
+      }
+    }
+  }
+}
+```
+
+**Using UV (Recommended):**
+```json
+{
+  "mcpServers": {
+    "smart-data-models": {
+      "command": "uv",
+      "args": ["run", "python", "src/smart_data_models_mcp/server.py"],
+      "cwd": "/path/to/smartdatamodels-mcp",
+      "env": {
+        "GITHUB_READ_TOKEN": "ghp_your_token_here"
+      }
+    }
+  }
+}
+```
+
+**Note:** Replace `/path/to/smartdatamodels-mcp` with the actual path to your project directory.
 
 #### SSE Mode Configuration
 

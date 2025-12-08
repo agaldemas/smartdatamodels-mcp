@@ -36,7 +36,7 @@ except ImportError:
 from fastmcp import FastMCP
 from pydantic import BaseModel, ConfigDict, Field
 
-# Initialize logger early to avoid NameError in middleware
+# Initialize logger early but configure it later to avoid startup issues
 logger = logging.getLogger(__name__)
 
 # Initialize the FastMCP server
@@ -61,6 +61,32 @@ This server acts as a bridge, allowing AI agents to seamlessly integrate with an
     strict_input_validation=False
 )
 
+# Global instances for data access and utilities (initialized later)
+data_api = None
+ngsi_generator = None
+schema_validator = None
+
+async def initialize_data():
+    """Pre-cache essential data on server startup (async version)."""
+    global data_api, ngsi_generator, schema_validator
+    
+    try:
+        # Initialize global instances
+        data_api = data_access.SmartDataModelsAPI()
+        ngsi_generator = model_generator.NGSILDGenerator()
+        schema_validator = model_validator.SchemaValidator()
+        
+        # Pre-cache domains and subjects
+        domains = await data_api.list_domains()
+        subjects = await data_api.list_subjects()
+
+    except Exception as e:
+        # Don't raise - let the server start with basic functionality
+        # Create minimal instances for tools to work
+        data_api = data_access.SmartDataModelsAPI()
+        ngsi_generator = model_generator.NGSILDGenerator()
+        schema_validator = model_validator.SchemaValidator()
+
 # Custom middleware to handle CORS for HTTP streaming
 async def cors_middleware(context: MiddlewareContext, call_next: Callable[[], Awaitable[Any]]) -> Any:
     """Add CORS headers for HTTP requests."""
@@ -74,23 +100,15 @@ async def cors_middleware(context: MiddlewareContext, call_next: Callable[[], Aw
         })
     return await call_next(context)
 
-# Custom middleware to log raw incoming requests
+# Custom middleware to log raw incoming requests (only for non-stdio transports)
 async def log_raw_request(context: MiddlewareContext, call_next: Callable[[], Awaitable[Any]]) -> Any:
-    tool_args = {}
-    if hasattr(context, "message") and context.message:
-        tool_args = getattr(context.message, "arguments", {})
-    logger.info(f"MCP Request received. Args: {tool_args}")
+    # Only log for HTTP/SSE transports, not stdio to avoid JSON corruption
+    if not hasattr(context, 'transport') or context.transport != 'stdio':
+        tool_args = {}
+        if hasattr(context, "message") and context.message:
+            tool_args = getattr(context.message, "arguments", {})
+        logger.info(f"MCP Request received. Args: {tool_args}")
     return await call_next(context)
-
-# Add middlewares in order
-mcp.add_middleware(cors_middleware)
-mcp.add_middleware(log_raw_request)
-
-# Global instances for data access and utilities
-data_api = data_access.SmartDataModelsAPI()
-ngsi_generator = model_generator.NGSILDGenerator()
-schema_validator = model_validator.SchemaValidator()
-
 
 # Pydantic models for tool parameters
 class SearchDataModelsParams(BaseModel):
@@ -100,31 +118,26 @@ class SearchDataModelsParams(BaseModel):
     subject: Optional[str] = Field(None, description="Limits the search to a specific subject (e.g., 'dataModel.User')")
     include_attributes: bool = Field(False, description="Whether to include attribute details in the results")
 
-
 class ListDomainsParams(BaseModel):
     model_config = ConfigDict(extra='allow')
 
 class ListSubjectsParams(BaseModel):
     model_config = ConfigDict(extra='allow')
  
-
 class ListModelsInSubjectParams(BaseModel):
     model_config = ConfigDict(extra='allow')
     subject: Optional[str] = Field(None, description="The name of the subject (e.g., 'dataModel.SmartCities', 'dataModel.Energy')")
-
 
 class GetModelDetailsParams(BaseModel):
     model_config = ConfigDict(extra='allow')
     model: str = Field(..., description="The name of the model")
     subject: Optional[str] = Field(None, description="The name of the subject (e.g., 'dataModel.User')")
 
-
 class ValidateAgainstModelParams(BaseModel):
     model_config = ConfigDict(extra='allow')
     model: str = Field(..., description="The name of the model")
     data: Union[str, Dict[str, Any]] = Field(..., description="The data to validate (can be a JSON string or a dictionary)")
     subject: Optional[str] = Field(None, description="The name of the subject (e.g., 'dataModel.User')")
-
 
 class GenerateNgsiLdFromJsonParams(BaseModel):
     model_config = ConfigDict(extra='allow')
@@ -133,42 +146,28 @@ class GenerateNgsiLdFromJsonParams(BaseModel):
     entity_id: Optional[str] = Field(None, description="The NGSI-LD entity ID")
     context: Optional[str] = Field(None, description="The Context URL for the NGSI-LD entity")
 
-
 class SuggestMatchingModelsParams(BaseModel):
     model_config = ConfigDict(extra='allow')    
     data: Union[str, Dict[str, Any]] = Field(..., description="The data to analyze (can be a JSON string or a dictionary)")
-
 
 class ListDomainSubjectsParams(BaseModel):
     model_config = ConfigDict(extra='allow')
     domain: str = Field(..., description="The name of the domain to get subjects for")
 
-
-async def initialize_data():
-    """Pre-cache essential data on server startup."""
-    logger.info("Server startup: Initializing data cache...")
-    try:
-        # Pre-cache domains and subjects
-        domains = await data_api.list_domains()
-        subjects = await data_api.list_subjects()
-        logger.info(f"Server startup: Data cache initialized successfully with {len(domains)} domains and {len(subjects)} subjects.")
-    except Exception as e:
-        logger.error(f"Server startup: Failed to initialize data cache: {e}")
-
-
-# Tool definitions
-@mcp.tool(exclude_args=["sessionId","toolCallId","action","chatInput"])
-async def list_domains(
-    sessionId: Optional[str] = None,
-    action: Optional[str] = None,
-    chatInput: Optional[str] = None,
-    toolCallId: Optional[str] = None
-) -> str:
+# Tool definitions (using global instances)
+@mcp.tool()
+async def list_domains() -> str:
     """List all available Smart Data Model domains.
 
     Returns:
         JSON string with available domains
     """
+    if data_api is None:
+        return json.dumps({
+            "success": False,
+            "error": "Server not fully initialized. Please try again in a moment."
+        }, indent=2)
+        
     try:
         domains = await data_api.list_domains()
 
@@ -185,19 +184,19 @@ async def list_domains(
             "error": str(e)
         }, indent=2)
 
-
-@mcp.tool(exclude_args=["sessionId","toolCallId","action","chatInput"])
-async def list_subjects(
-    sessionId: Optional[str] = None,
-    action: Optional[str] = None,
-    chatInput: Optional[str] = None,
-    toolCallId: Optional[str] = None
-) -> str:
+@mcp.tool()
+async def list_subjects() -> str:
     """List all available Smart Data Model subjects.
 
     Returns:
         JSON string with available subjects
     """
+    if data_api is None:
+        return json.dumps({
+            "success": False,
+            "error": "Server not fully initialized. Please try again in a moment."
+        }, indent=2)
+        
     try:
         subjects = await data_api.list_subjects()
 
@@ -214,20 +213,21 @@ async def list_subjects(
             "error": str(e)
         }, indent=2)
 
-
-@mcp.tool(exclude_args=["sessionId","toolCallId","action","chatInput"])
+@mcp.tool()
 async def list_domain_subjects(
-    domain: str = Field(..., description="The name of the domain to get subjects for"),
-    sessionId: Optional[str] = None,
-    action: Optional[str] = None,
-    chatInput: Optional[str] = None,
-    toolCallId: Optional[str] = None
+    domain: str = Field(..., description="The name of the domain to get subjects for")
 ) -> str:
     """List all subjects belonging to a specific domain.
 
     Returns:
         JSON string with subjects in the domain
     """
+    if data_api is None:
+        return json.dumps({
+            "success": False,
+            "error": "Server not fully initialized. Please try again in a moment."
+        }, indent=2)
+        
     try:
         subjects = await data_api.list_domain_subjects(domain)
 
@@ -246,19 +246,21 @@ async def list_domain_subjects(
             "domain": domain
         }, indent=2)
 
-@mcp.tool(exclude_args=["sessionId","toolCallId","action","chatInput"])
+@mcp.tool()
 async def list_models_in_subject(
-    subject: Optional[str] = Field(None, description="The name of the subject (e.g., 'dataModel.SmartCities', 'dataModel.Energy')"),
-    sessionId: Optional[str] = None,
-    action: Optional[str] = None,
-    chatInput: Optional[str] = None,
-    toolCallId: Optional[str] = None
+    subject: Optional[str] = Field(None, description="The name of the subject (e.g., 'dataModel.SmartCities', 'dataModel.Energy')")
 ) -> str:
     """List all data models within a specific subject.
 
     Returns:
         JSON string with models in the subject
     """
+    if data_api is None:
+        return json.dumps({
+            "success": False,
+            "error": "Server not fully initialized. Please try again in a moment."
+        }, indent=2)
+        
     try:
         subject_param = subject if subject else None
         models = await data_api.list_models_in_subject(
@@ -280,23 +282,24 @@ async def list_models_in_subject(
             "subject": subject
         }, indent=2)
 
-
-@mcp.tool(exclude_args=["sessionId","toolCallId","action","chatInput"])
+@mcp.tool()
 async def search_data_models(
     query: str = Field(..., description="The search query (model name, attributes, or keywords)"),
     domain: Optional[str] = Field(None, description="Limits the search to a specific domain (e.g., 'SmartCities')"),
     subject: Optional[str] = Field(None, description="Limits the search to a specific subject (e.g., 'dataModel.User')"),
-    include_attributes: bool = Field(False, description="Whether to include attribute details in the results"),
-    sessionId: Optional[str] = None,
-    action: Optional[str] = None,
-    chatInput: Optional[str] = None,
-    toolCallId: Optional[str] = None
+    include_attributes: bool = Field(False, description="Whether to include attribute details in the results")
 ) -> str:
     """Search for data models across subjects by name, attributes, or keywords.
 
     Returns:
         JSON string with search results
     """
+    if data_api is None:
+        return json.dumps({
+            "success": False,
+            "error": "Server not fully initialized. Please try again in a moment."
+        }, indent=2)
+        
     try:
         subject_param = subject if subject else None
         results = await data_api.search_models(
@@ -320,20 +323,22 @@ async def search_data_models(
             "error": str(e)
         }, indent=2)
 
-@mcp.tool(exclude_args=["sessionId","toolCallId","action","chatInput"])
+@mcp.tool()
 async def get_model_details(
     model: str = Field(..., description="The name of the model"),
-    subject: Optional[str] = Field(None, description="The name of the subject (e.g., 'dataModel.User')"),
-    sessionId: Optional[str] = None,
-    action: Optional[str] = None,
-    chatInput: Optional[str] = None,
-    toolCallId: Optional[str] = None
+    subject: Optional[str] = Field(None, description="The name of the subject (e.g., 'dataModel.User')")
 ) -> str:
     """Get detailed information about a specific data model.
 
     Returns:
         JSON string with model details including schema, examples, and metadata
     """
+    if data_api is None:
+        return json.dumps({
+            "success": False,
+            "error": "Server not fully initialized. Please try again in a moment."
+        }, indent=2)
+        
     try:
         subject_param = subject if subject else None
         details = await data_api.get_model_details(
@@ -357,16 +362,11 @@ async def get_model_details(
             "model": model
         }, indent=2)
 
-
-@mcp.tool(exclude_args=["sessionId","toolCallId","action","chatInput"])
+@mcp.tool()
 async def validate_against_model(
     model: str = Field(..., description="The name of the model"),
     data: Union[str, Dict[str, Any]] = Field(..., description="The data to validate (can be a JSON string or a dictionary)"),
-    subject: Optional[str] = Field(None, description="The name of the subject (e.g., 'dataModel.User')"),
-    sessionId: Optional[str] = None,
-    action: Optional[str] = None,
-    chatInput: Optional[str] = None,
-    toolCallId: Optional[str] = None
+    subject: Optional[str] = Field(None, description="The name of the subject (e.g., 'dataModel.User')")
 ) -> str:
     """Validate data against a Smart Data Model schema.
 
@@ -407,23 +407,24 @@ async def validate_against_model(
             "model": model
         }, indent=2)
 
-
-@mcp.tool(exclude_args=["sessionId","toolCallId","action","chatInput"])
+@mcp.tool()
 async def generate_ngsi_ld_from_json(
     data: Union[str, Dict[str, Any]] = Field(..., description="The input data (can be a JSON string or a dictionary)"),
     entity_type: Optional[str] = Field(None, description="The NGSI-LD entity type"),
     entity_id: Optional[str] = Field(None, description="The NGSI-LD entity ID"),
-    context: Optional[str] = Field(None, description="The Context URL for the NGSI-LD entity"),
-    sessionId: Optional[str] = None,
-    action: Optional[str] = None,
-    chatInput: Optional[str] = None,
-    toolCallId: Optional[str] = None
+    context: Optional[str] = Field(None, description="The Context URL for the NGSI-LD entity")
 ) -> str:
     """Generate NGSI-LD compliant entities from arbitrary JSON data.
 
     Returns:
         JSON string with generated NGSI-LD entity
     """
+    if ngsi_generator is None:
+        return json.dumps({
+            "success": False,
+            "error": "Server not fully initialized. Please try again in a moment."
+        }, indent=2)
+        
     try:
         # Parse data if it's a string
         parsed_data = data
@@ -456,20 +457,21 @@ async def generate_ngsi_ld_from_json(
             "error": str(e)
         }, indent=2)
 
-
-@mcp.tool(exclude_args=["sessionId","toolCallId","action","chatInput"])
+@mcp.tool()
 async def suggest_matching_models(
-    data: Union[str, Dict[str, Any]] = Field(..., description="The data to analyze (can be a JSON string or a dictionary)"),
-    sessionId: Optional[str] = None,
-    action: Optional[str] = None,
-    chatInput: Optional[str] = None,
-    toolCallId: Optional[str] = None
+    data: Union[str, Dict[str, Any]] = Field(..., description="The data to analyze (can be a JSON string or a dictionary)")
 ) -> str:
     """Suggest Smart Data Models that match provided data structure.
 
     Returns:
         JSON string with suggested models and similarity scores
     """
+    if data_api is None:
+        return json.dumps({
+            "success": False,
+            "error": "Server not fully initialized. Please try again in a moment."
+        }, indent=2)
+        
     try:
         # Parse data if it's a string
         parsed_data = data
@@ -499,8 +501,6 @@ async def suggest_matching_models(
             "error": str(e)
         }, indent=2)
 
-
-
 # Resource handlers
 @mcp.resource("sdm://instructions")
 async def get_instructions() -> str:
@@ -521,7 +521,6 @@ async def get_instructions() -> str:
     """
     return mcp.instructions
 
-
 @mcp.resource("sdm://{subject}/{model}/schema.json")
 async def get_model_schema(subject: str, model: str) -> str:
     """Get the JSON schema for a specific Smart Data Model.
@@ -533,6 +532,13 @@ async def get_model_schema(subject: str, model: str) -> str:
     Returns:
         JSON schema as string
     """
+    if data_api is None:
+        return json.dumps({
+            "error": "Server not fully initialized. Please try again in a moment.",
+            "subject": subject,
+            "model": model
+        }, indent=2)
+        
     try:
         subject_param = subject if subject else None
         schema = await data_api.get_model_schema(subject=subject_param, model=model)
@@ -546,7 +552,6 @@ async def get_model_schema(subject: str, model: str) -> str:
             "model": model
         }, indent=2)
 
-
 @mcp.resource("sdm://{subject}/{model}/examples/example.json")
 async def get_model_examples(subject: str, model: str) -> str:
     """Get example instances for a specific Smart Data Model.
@@ -558,6 +563,13 @@ async def get_model_examples(subject: str, model: str) -> str:
     Returns:
         Examples as JSON string
     """
+    if data_api is None:
+        return json.dumps({
+            "error": "Server not fully initialized. Please try again in a moment.",
+            "subject": subject,
+            "model": model
+        }, indent=2)
+        
     try:
         subject_param = subject if subject else None
         examples = await data_api.get_model_examples(subject=subject_param, model=model)
@@ -571,7 +583,6 @@ async def get_model_examples(subject: str, model: str) -> str:
             "model": model
         }, indent=2)
 
-
 @mcp.resource("sdm://{subject}/context.jsonld")
 async def get_subject_context(subject: str) -> str:
     """Get the JSON-LD context for a subject.
@@ -582,6 +593,12 @@ async def get_subject_context(subject: str) -> str:
     Returns:
         JSON-LD context as string
     """
+    if data_api is None:
+        return json.dumps({
+            "error": "Server not fully initialized. Please try again in a moment.",
+            "subject": subject
+        }, indent=2)
+        
     try:
         subject_param = subject if subject else None
         context = await data_api.get_subject_context(subject=subject_param)
@@ -594,14 +611,12 @@ async def get_subject_context(subject: str) -> str:
             "subject": subject
         }, indent=2)
 
-
 def run_http_streaming_server(port: int = 8000):
     """Run the MCP server with HTTP streaming support."""
     logger.info(f"Starting Smart Data Models MCP Server with HTTP streaming transport on port {port}")
 
     # Use HTTP streaming transport
     asyncio.run(mcp.run_http_async(port=port, transport="streamable-http", path="/mcp"))
-
 
 def run_sse_server(port: int = 8000):
     """Run the MCP server with SSE support."""
@@ -610,7 +625,6 @@ def run_sse_server(port: int = 8000):
     # Use SSE transport
     asyncio.run(mcp.run_http_async(port=port, transport="sse"))
 
-
 def run_combined_server(port: int = 8000):
     """Run both stdio and HTTP streaming transports concurrently."""
     logger.info(f"Starting Smart Data Models MCP Server with combined transport on port {port}")
@@ -618,6 +632,79 @@ def run_combined_server(port: int = 8000):
     # For combined mode, run HTTP streaming
     asyncio.run(mcp.run_http_async(port=port, transport="streamable-http", path="/mcp"))
 
+async def run_stdio_with_init():
+    """Run stdio transport with proper async initialization."""
+    try:
+        # Initialize data asynchronously before starting the server
+        await initialize_data()
+        # Run the MCP server with stdio transport - NO logging to stdout
+        await mcp.run_async(transport="stdio")
+    except Exception as e:
+        # Log to stderr only for critical errors
+        print(f"CRITICAL: Failed to start stdio server: {e}", file=sys.stderr)
+        sys.exit(1)
+
+def setup_stdio_logging(log_file):
+    """Setup minimal logging for stdio transport - file only."""
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.INFO)
+    
+    # Clear existing handlers
+    for handler in root_logger.handlers[:]:
+        root_logger.removeHandler(handler)
+    
+    # File handler only
+    file_handler = RotatingFileHandler(
+        log_file,
+        maxBytes=1024*1024,  # 1MB
+        backupCount=5
+    )
+    file_handler.setLevel(logging.DEBUG)
+    file_formatter = logging.Formatter(
+        '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+    file_handler.setFormatter(file_formatter)
+    root_logger.addHandler(file_handler)
+    
+    # Disable all logging propagation to console
+    logging.getLogger().handlers = [file_handler]
+    
+    # Get the module logger
+    global logger
+    logger = logging.getLogger(__name__)
+
+def setup_http_logging(log_file, log_level):
+    """Setup full logging for HTTP transports."""
+    root_logger = logging.getLogger()
+    root_logger.setLevel(log_level)
+    
+    # Clear existing handlers
+    for handler in root_logger.handlers[:]:
+        root_logger.removeHandler(handler)
+    
+    # Console handler
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setLevel(log_level)
+    console_formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+    console_handler.setFormatter(console_formatter)
+    root_logger.addHandler(console_handler)
+    
+    # File handler
+    file_handler = RotatingFileHandler(
+        log_file,
+        maxBytes=1024*1024,  # 1MB
+        backupCount=5
+    )
+    file_handler.setLevel(logging.DEBUG)
+    file_formatter = logging.Formatter(
+        '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+    file_handler.setFormatter(file_formatter)
+    root_logger.addHandler(file_handler)
+    
+    # Get the module logger
+    global logger
+    logger = logging.getLogger(__name__)
 
 def main():
     """Main entry point for the MCP server."""
@@ -644,7 +731,7 @@ def main():
 
     args = parser.parse_args()
 
-    # Configure logging
+    # Configure logging BEFORE any other operations
     log_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'logs')
     os.makedirs(log_dir, exist_ok=True)
     log_file = os.path.join(log_dir, 'smart-data-models.log')
@@ -652,67 +739,47 @@ def main():
     # Set logging level based on debug flag
     log_level = logging.DEBUG if args.debug else logging.INFO
 
-    root_logger = logging.getLogger()
-    # Clear all existing handlers from the root logger
-    for handler in root_logger.handlers[:]:
-        root_logger.removeHandler(handler)
-
-    root_logger.setLevel(log_level) # Set overall logging level
-
-    # Console handler
-    console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setLevel(log_level)
-    console_formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
-    console_handler.setFormatter(console_formatter)
-    root_logger.addHandler(console_handler)
-
-    # File handler
-    file_handler = RotatingFileHandler(
-        log_file,
-        maxBytes=1024*1024,  # 1MB
-        backupCount=5
-    )
-    file_handler.setLevel(logging.DEBUG) # File can log more verbosely
-    file_formatter = logging.Formatter(
-        '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-    )
-    file_handler.setFormatter(file_formatter)
-    root_logger.addHandler(file_handler)
-
-    # Re-get the module-level logger to ensure it uses the new configuration
-    global logger
-    logger = logging.getLogger(__name__)
-
-    # Initialize data before starting the server
-    if args.debug:
-        logger.info("DEBUG MODE ENABLED: Verbose logging activated")
-    logger.info("Initializing data before starting server...")
-    asyncio.run(initialize_data())
-    logger.info("Data initialization complete.")
-
-    # Handle transport modes
     transport = args.transport.lower()
-    port = args.port
+    
+    if transport == "stdio":
+        # For stdio transport: SILENT startup, logging to file only
+        setup_stdio_logging(log_file)
+        logger.info("Starting Smart Data Models MCP Server with stdio transport (logging to file only)")
+        
+        # Run async stdio with initialization - NO console output
+        asyncio.run(run_stdio_with_init())
+        
+    else:
+        # For HTTP/SSE transports: normal logging
+        setup_http_logging(log_file, log_level)
+        
+        if args.debug:
+            logger.info("DEBUG MODE ENABLED: Verbose logging activated")
+        logger.info("Initializing data before starting HTTP server...")
+        asyncio.run(initialize_data())
+        logger.info("Data initialization complete.")
 
-    if transport == "http":
-        logger.info(f"Starting Smart Data Models MCP Server with HTTP streaming transport on port {port}")
-        logger.info(f"Server will be accessible at: http://127.0.0.1:{port}/mcp")
-        logger.info(f"Logs will be written to: {log_file}")
-        run_http_streaming_server(port)
-    elif transport == "sse":
-        logger.info(f"Starting Smart Data Models MCP Server with SSE transport on port {port}")
-        logger.info(f"Logs will be written to: {log_file}")
-        run_sse_server(port)
-    elif transport == "combined":
-        logger.info(f"Starting Smart Data Models MCP Server with combined transport on port {port}")
-        logger.info(f"Server will be accessible at: http://127.0.0.1:{port}/mcp")
-        logger.info(f"Logs will be written to: {log_file}")
-        run_combined_server(port)
-    else:  # stdio (default)
-        logger.info("Starting Smart Data Models MCP Server with stdio transport")
-        logger.info(f"Logs will be written to: {log_file}")
-        mcp.run(transport="stdio")
+        # Handle HTTP/SSE transport modes
+        port = args.port
 
+        if transport == "http":
+            logger.info(f"Starting Smart Data Models MCP Server with HTTP streaming transport on port {port}")
+            logger.info(f"Server will be accessible at: http://127.0.0.1:{port}/mcp")
+            logger.info(f"Logs will be written to: {log_file}")
+            run_http_streaming_server(port)
+        elif transport == "sse":
+            logger.info(f"Starting Smart Data Models MCP Server with SSE transport on port {port}")
+            logger.info(f"Logs will be written to: {log_file}")
+            run_sse_server(port)
+        elif transport == "combined":
+            logger.info(f"Starting Smart Data Models MCP Server with combined transport on port {port}")
+            logger.info(f"Server will be accessible at: http://127.0.0.1:{port}/mcp")
+            logger.info(f"Logs will be written to: {log_file}")
+            run_combined_server(port)
+
+# Add middlewares AFTER tools are defined but BEFORE running server
+mcp.add_middleware(cors_middleware)
+mcp.add_middleware(log_raw_request)
 
 if __name__ == "__main__":
     main()
