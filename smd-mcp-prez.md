@@ -5,7 +5,7 @@
 
 # What is it?
 - A **Model Context Protocol (MCP)** server for **FIWARE Smart Data Models**
-- **What is MCP?**: An open standard that enables AI models to seamlessly access external data and tools
+- **What is MCP?**: An open standard that enables AI models to seamlessly access external data and tools.
 - **SDM Discovery Engine**: Instant access to 1,000+ standardized data models
 - **NGSI-LD/V2 Powerhouse**: Intelligent generation and validation of IoT entities
 - **Multi-Transport**: Production-ready with **stdio**, **SSE**, and **HTTP Streaming**
