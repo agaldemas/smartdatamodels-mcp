@@ -9,6 +9,7 @@
 - Provides seamless access to standardized IoT data structures
 - Built with **Python 3.9+** and the **FastMCP** framework
 - Supports **Standard I/O**, **SSE**, and **HTTP Streaming** transports
+- **Modern Architecture**: Optimized for high-concurrency and reliability
 
 ---
 
@@ -18,6 +19,7 @@
 - **Interoperability**: NGSI-LD compliant schemas
 - **Proven**: Community-driven, industry-vetted, and backed by FIWARE
 - **Global Standard**: Used worldwide for digital twin synchronization
+- **Schema-First**: Every model is backed by a formal JSON Schema
 
 ---
 
@@ -28,6 +30,7 @@
 - **✅ Validate**: Real-time schema validation with detailed error reporting
 - **💡 Suggest**: Smart model recommendations based on data structure analysis
 - **📚 Resources**: Direct access to JSON schemas, examples, and LD-Contexts
+- **📊 Intelligence**: Automated detection of GeoProperties and Relationships
 
 ---
 
@@ -36,41 +39,53 @@
   <img src="img/sdm-organization.drawio.png" alt="SDM Organization" style="max-height: 400px;">
 </div>
 
-- **Domains** (e.g., SmartCities) contain **Subjects**
-- **Subjects** (e.g., Mobility) contain **Models**
-- **Models** (e.g., BikeHireStation) use **Properties**
+- **Domains** (e.g., SmartCities) represent high-level sectors
+- **Subjects** (e.g., Mobility) group related models
+- **Models** (e.g., BikeHireStation) define specific entities
+- **Properties** describe attributes and relationships
 
 ---
 
 # How it Works
 1. **Tool Access**: AI agents call specialized tools (e.g., `search_data_models`)
-2. **Data Fetching**: Multi-source strategy (GitHub API + `pysmartdatamodels`)
+2. **Data Fetching**: Hybrid strategy using GitHub API and `pysmartdatamodels`
 3. **Processing**: Intelligent inference of NGSI-LD types (GeoProperty, Relationship)
-4. **Caching**: Robust in-memory caching with 30-minute TTL
-5. **Response**: Structured JSON optimized for AI consumption
+4. **Caching**: Robust in-memory caching with 30-minute TTL for API efficiency
+5. **Response**: Structured JSON optimized for AI LLM context windows
 
 ---
 
-# Available MCP Tools
-- `list_domains` / `list_subjects`: Explore the hierarchy
-- `search_data_models`: Find the right model for your use case
-- `get_model_details`: Deep dive into schemas and examples
-- `validate_against_model`: Ensure data compliance
-- `generate_ngsi_ld_from_json`: Automate NGSI-LD mapping
-- `suggest_matching_models`: AI-driven model discovery
+# Available MCP Tools (1/2)
+### Exploration & Discovery
+- **`list_domains`**: Get an overview of all sectors (Cities, Energy, etc.)
+- **`list_subjects`**: Browse all categories within the ecosystem
+- **`list_domain_subjects`**: Filter subjects by a specific domain
+- **`list_models_in_subject`**: List specific data models (e.g., `WeatherObserved`)
+- **`search_data_models`**: Universal search across the entire registry
+
+---
+
+# Available MCP Tools (2/2)
+### Data Operations
+- **`get_model_details`**: Retrieve schemas, examples, and detailed metadata
+- **`validate_against_model`**: Verify if your data follows the official standard
+- **`generate_ngsi_ld_from_json`**: Automatic mapping to NGSI-LD format
+- **`suggest_matching_models`**: Similarity analysis to find the right model
+- **`get_instructions`**: Integrated help for agents to understand capabilities
 
 ---
 
 # MCP Resources
-Accessible via URIs:
-- **Instructions**: `sdm://instructions`
-- **Schemas**: `sdm://{subject}/{model}/schema.json`
-- **Examples**: `sdm://{subject}/{model}/examples/example.json`
-- **Contexts**: `sdm://{subject}/context.jsonld`
+Direct URI-based access to core artifacts:
+- **`sdm://instructions`**: Dynamic server documentation
+- **`sdm://{subject}/{model}/schema.json`**: Official JSON Schemas
+- **`sdm://{subject}/{model}/examples/example.json`**: Real-world examples
+- **`sdm://{subject}/context.jsonld`**: NGSI-LD / JSON-LD Contexts
+- *Enables agents to "read" documentation like a local file*
 
 ---
 
-# Installation
+# Installation & Setup
 ### Using UV (Recommended)
 ```bash
 git clone https://github.com/agaldemas/smartdatamodels-mcp
@@ -83,10 +98,13 @@ uv sync
 pip install --index-url https://test.pypi.org/simple/ smart-data-models-mcp
 ```
 
+### GitHub Token (Optional but Recommended)
+Set `GITHUB_READ_TOKEN` to increase API rate limits for extensive searching.
+
 ---
 
 # Configuration (Cline / Claude)
-### STDIO Mode
+### STDIO Mode (Desktop)
 ```json
 {
   "mcpServers": {
@@ -99,13 +117,9 @@ pip install --index-url https://test.pypi.org/simple/ smart-data-models-mcp
   }
 }
 ```
-### SSE Mode (for n8n / Web)
-```json
-{
-  "type": "sse",
-  "url": "http://localhost:3200/sse"
-}
-```
+### SSE Mode (for n8n / Web Integrations)
+- Run with `--transport sse --port 3200`
+- Connect at: `http://localhost:3200/sse`
 
 ---
 
@@ -116,15 +130,25 @@ Once configured, you can ask your agent:
 - *"Générer une entité NGSI-LD à partir de ces données de capteur : {...}"*
 - *"Valider ce fichier Building.json par rapport au schéma officiel"*
 - *"Quels modèles correspondraient le mieux à cette structure de données ?"*
+- *"Donne moi un exemple d'instance pour le modèle WasteContainer"*
 
 ---
 
 # Technical Benefits
-- **Asynchronous**: High performance with Python `asyncio`
-- **Smart Mapping**: Automatically detects `GeoProperty` (GeoJSON) and `Relationship`
-- **Rate Limit Friendly**: Uses `GITHUB_READ_TOKEN` to avoid API limits
-- **Robust**: Detailed logging and comprehensive test suite (`pytest`)
-- **Flexible**: Easy integration with Cline, Claude Desktop, and n8n
+- **Asynchronous**: Built on `asyncio` for non-blocking I/O operations
+- **Smart Mapping**: Native detection of GeoJSON and NGSI-LD Relationships
+- **Resilient**: Graceful fallback between GitHub and local package data
+- **Maintainable**: 100% Type-hinted Python code with automated testing
+- **Universal**: One server for Cline, Claude, n8n, and custom web apps
+
+---
+
+# Why it Matters for AI?
+- **Context is King**: Provides LLMs with exact data structures
+- **Zero-Shot Accuracy**: Agents don't guess, they query the standard
+- **Interoperability**: Ensures AI-generated data works with FIWARE Orions
+- **Scalability**: Access thousands of models without manual configuration
+- **Future-Proof**: Bridges the gap between LLMs and Digital Twin standards
 
 ---
 
@@ -135,3 +159,16 @@ Once configured, you can ask your agent:
 **Official SDM**: github.com/smart-data-models
 
 *Built with ❤️ for AI Interoperability and the FIWARE Ecosystem*
+
+---
+# Thanks !
+
+<div style="display: flex; gap: 20px; align-items: center; justify-content: center; margin-bottom: 20px;">
+  <img src="./sdm-logo.png" height="180" style="border-radius: 5px;">
+  <img src="./logo-fiware-white.png" height="180" style="border-radius: 5px; ">
+</div>
+
+<div style="text-align: center;">
+  <strong>Alain Galdemas a faithful Fiware & Smart Data Models supporter & evangelist</strong><br>
+  <a href="mailto:alain.galdemas@gmail.com">alain.galdemas@gmail.com</a>
+</div>
