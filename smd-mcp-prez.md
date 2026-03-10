@@ -7,24 +7,27 @@
 - A **Model Context Protocol (MCP)** server
 - Bridges AI agents with **FIWARE Smart Data Models**
 - Provides seamless access to standardized IoT data structures
-- Built with Python and the FastMCP framework
+- Built with **Python 3.9+** and the **FastMCP** framework
+- Supports **Standard I/O**, **SSE**, and **HTTP Streaming** transports
 
 ---
 
 # Why Smart Data Models?
-- **15+ Domains**: Smart Cities, Energy, Agriculture, etc.
+- **15+ Domains**: Smart Cities, Energy, Agriculture, Water, etc.
 - **Consistency**: Standardized attributes and relationships
 - **Interoperability**: NGSI-LD compliant schemas
-- **Proven**: Community-driven and industry-vetted
+- **Proven**: Community-driven, industry-vetted, and backed by FIWARE
+- **Global Standard**: Used worldwide for digital twin synchronization
 
 ---
 
 # Key Features
-- **Discover**: Browse domains and list subjects
-- **Search**: Find models by keywords or attributes
-- **Generate**: Create NGSI-LD entities from raw JSON
-- **Validate**: Check data against official schemas
-- **Resources**: Direct access to schemas and examples
+- **🔍 Discover**: Browse 15+ domains and hundreds of subjects
+- **🔎 Search**: Advanced search by keywords, attributes, or model names
+- **✨ Generate**: Intelligent conversion of raw JSON to NGSI-LD entities
+- **✅ Validate**: Real-time schema validation with detailed error reporting
+- **💡 Suggest**: Smart model recommendations based on data structure analysis
+- **📚 Resources**: Direct access to JSON schemas, examples, and LD-Contexts
 
 ---
 
@@ -33,17 +36,37 @@
   <img src="img/sdm-organization.drawio.png" alt="SDM Organization" style="max-height: 400px;">
 </div>
 
-- **Domains** contain **Subjects**
-- **Subjects** contain **Models**
-- **Models** use **Properties**
+- **Domains** (e.g., SmartCities) contain **Subjects**
+- **Subjects** (e.g., Mobility) contain **Models**
+- **Models** (e.g., BikeHireStation) use **Properties**
 
 ---
 
 # How it Works
-1. **Tool Access**: AI agents call tools like `search_data_models`
-2. **Data Fetching**: Server connects to GitHub API and pysmartdatamodels
+1. **Tool Access**: AI agents call specialized tools (e.g., `search_data_models`)
+2. **Data Fetching**: Multi-source strategy (GitHub API + `pysmartdatamodels`)
 3. **Processing**: Intelligent inference of NGSI-LD types (GeoProperty, Relationship)
-4. **Response**: Structured JSON for the AI agent to consume
+4. **Caching**: Robust in-memory caching with 30-minute TTL
+5. **Response**: Structured JSON optimized for AI consumption
+
+---
+
+# Available MCP Tools
+- `list_domains` / `list_subjects`: Explore the hierarchy
+- `search_data_models`: Find the right model for your use case
+- `get_model_details`: Deep dive into schemas and examples
+- `validate_against_model`: Ensure data compliance
+- `generate_ngsi_ld_from_json`: Automate NGSI-LD mapping
+- `suggest_matching_models`: AI-driven model discovery
+
+---
+
+# MCP Resources
+Accessible via URIs:
+- **Instructions**: `sdm://instructions`
+- **Schemas**: `sdm://{subject}/{model}/schema.json`
+- **Examples**: `sdm://{subject}/{model}/examples/example.json`
+- **Contexts**: `sdm://{subject}/context.jsonld`
 
 ---
 
@@ -55,15 +78,15 @@ cd smart-data-models-mcp
 uv sync
 ```
 
-### Using pip
+### From TestPyPI
 ```bash
-pip install smart-data-models-mcp
+pip install --index-url https://test.pypi.org/simple/ smart-data-models-mcp
 ```
 
 ---
 
-# Configuration (Cline)
-Add this to `cline_mcp_settings.json`:
+# Configuration (Cline / Claude)
+### STDIO Mode
 ```json
 {
   "mcpServers": {
@@ -76,30 +99,39 @@ Add this to `cline_mcp_settings.json`:
   }
 }
 ```
+### SSE Mode (for n8n / Web)
+```json
+{
+  "type": "sse",
+  "url": "http://localhost:3200/sse"
+}
+```
 
 ---
 
 # Usage with AI Agent
 Once configured, you can ask your agent:
-- *"Show me all available domains in Smart Data Models"*
-- *"Find data models related to weather"*
-- *"Convert this sensor data to NGSI-LD format: {...}"*
-- *"Validate this Building data against the official schema"*
+- *"Lister tous les domaines disponibles dans Smart Data Models"*
+- *"Trouver des modèles liés à la qualité de l'air"*
+- *"Générer une entité NGSI-LD à partir de ces données de capteur : {...}"*
+- *"Valider ce fichier Building.json par rapport au schéma officiel"*
+- *"Quels modèles correspondraient le mieux à cette structure de données ?"*
 
 ---
 
 # Technical Benefits
-- **Asynchronous**: High performance with async/await
-- **Caching**: 30-minute TTL to respect GitHub API limits
-- **Robust**: Error handling and graceful degradation
-- **Flexible**: Supports `stdio`, `sse`, and `http` transport modes
+- **Asynchronous**: High performance with Python `asyncio`
+- **Smart Mapping**: Automatically detects `GeoProperty` (GeoJSON) and `Relationship`
+- **Rate Limit Friendly**: Uses `GITHUB_READ_TOKEN` to avoid API limits
+- **Robust**: Detailed logging and comprehensive test suite (`pytest`)
+- **Flexible**: Easy integration with Cline, Claude Desktop, and n8n
 
 ---
 
 # Get Started
-### Explore the Smart Data Models ecosystem today!
+### Empower your AI agents with standardized data today!
 
 **GitHub**: agaldemas/smartdatamodels-mcp
 **Official SDM**: github.com/smart-data-models
 
-*Built with ❤️ for AI Interoperability*
+*Built with ❤️ for AI Interoperability and the FIWARE Ecosystem*
