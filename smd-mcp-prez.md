@@ -86,24 +86,26 @@ Direct URI-based access to core artifacts:
 ---
 
 # Installation & Setup
-### Using UV (Recommended)
+### Install Using UV (Recommended)
 ```bash
 git clone https://github.com/agaldemas/smartdatamodels-mcp
 cd smart-data-models-mcp
 uv sync
 ```
 
-### From TestPyPI
+### Install From TestPyPI
 ```bash
 pip install --index-url https://test.pypi.org/simple/ smart-data-models-mcp
 ```
 
-### GitHub Token (Optional but Recommended)
+### Set GitHub Token (Optional but Recommended, to avoid rate limiting issues)
+
 Set `GITHUB_READ_TOKEN` to increase API rate limits for extensive searching.
 
 ---
 
 # Configuration (Cline / Claude)
+
 ### STDIO Mode (Desktop)
 ```json
 {
@@ -164,8 +166,8 @@ Once configured, you can ask your agent:
 # Thanks !
 
 <div style="display: flex; gap: 20px; align-items: center; justify-content: center; margin-bottom: 20px;">
-  <img src="./sdm-logo.png" height="180" style="border-radius: 5px;">
-  <img src="./logo-fiware-white.png" height="180" style="border-radius: 5px; ">
+  <img src="./img/sdm-logo.png" height="180" style="border-radius: 5px;">
+  <img src="./img/logo-fiware-white.png" height="180" style="border-radius: 5px; ">
 </div>
 
 <div style="text-align: center;">
