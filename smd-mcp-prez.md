@@ -4,12 +4,12 @@
 ---
 
 # What is it?
-- A **Model Context Protocol (MCP)** server
-- Bridges AI agents with **FIWARE Smart Data Models**
-- Provides seamless access to standardized IoT data structures
-- Built with **Python 3.9+** and the **FastMCP** framework
-- Supports **Standard I/O**, **SSE**, and **HTTP Streaming** transports
-- **Modern Architecture**: Optimized for high-concurrency and reliability
+- A **Model Context Protocol (MCP)** server for **FIWARE Smart Data Models**
+- **What is MCP?**: An open standard that enables AI models to seamlessly access external data and tools
+- **SDM Discovery Engine**: Instant access to 1,000+ standardized data models
+- **NGSI-LD/V2 Powerhouse**: Intelligent generation and validation of IoT entities
+- **Multi-Transport**: Production-ready with **stdio**, **SSE**, and **HTTP Streaming**
+- **Open to any agent**: Works with Claude Desktop, Cline, Cursor, n8n, etc.
 
 ---
 
@@ -23,7 +23,7 @@
 
 ---
 
-# Key Features
+# Key Features of the SDM MCP server
 - **🔍 Discover**: Browse 15+ domains and hundreds of subjects
 - **🔎 Search**: Advanced search by keywords, attributes, or model names
 - **✨ Generate**: Intelligent conversion of raw JSON to NGSI-LD entities
@@ -34,7 +34,7 @@
 
 ---
 
-# Organization Structure
+# SDM Structure
 <div align="center">
   <img src="img/sdm-organization.drawio.png" alt="SDM Organization" style="max-height: 400px;">
 </div>
