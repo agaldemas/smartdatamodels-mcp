@@ -29,3 +29,4 @@ uv.lock
 .DS_Store
 cline_task_*.md
 tests-res
+*.bkp
