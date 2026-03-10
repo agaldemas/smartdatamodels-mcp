@@ -13,6 +13,20 @@ This MCP server allows AI agents to:
 - **Access** model schemas, examples, and JSON-LD contexts
 - **Explore** domains and models for integration planning
 
+## Understand Smart Data Models organization:
+
+<div align="center">
+  <img src="img/sdm-organization.drawio.png" alt="Smart Data Models Organization" style="max-height: 500px;">
+</div>
+
+The diagram above illustrates the hierarchical organization of Smart Data Models:
+- **Domains**: High-level sectors such as Smart Cities, Energy, or Agriculture.
+- **Subjects**: Specific categories within a domain (e.g., Water, Mobility).
+- **Models**: Individual data models defining specific entities.
+- **Properties**: The attributes and relationships that compose each model.
+
+Each level is hosted in its own GitHub repository, ensuring a modular and scalable architecture.
+
 ## Features
 
 ### 🔍 Discovery & Search
