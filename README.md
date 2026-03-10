@@ -1,7 +1,7 @@
 # Smart Data Models MCP Server
 
-A Model Context Protocol (MCP) server that provides AI agents with access to FIWARE Smart Data Models, enabling seamless integration with NGSI-LD compliant IoT platforms.
-
+### A Model Context Protocol (MCP) server that provides AI agents with access to FIWARE Smart Data Models, enabling seamless integration with NGSI-LD compliant IoT platforms.
+---
 ## Overview
 
 This MCP server allows AI agents to:
@@ -12,7 +12,7 @@ This MCP server allows AI agents to:
 - **Validate** data against Smart Data Model schemas
 - **Access** model schemas, examples, and JSON-LD contexts
 - **Explore** domains and models for integration planning
-
+---
 ## Understand Smart Data Models organization:
 
 <div align="center">
@@ -26,7 +26,7 @@ The diagram above illustrates the hierarchical organization of Smart Data Models
 - **Properties**: The attributes and relationships that compose each model.
 
 Each level is hosted in its own GitHub repository, ensuring a modular and scalable architecture.
-
+---
 ## Features
 
 ### 🔍 Discovery & Search
@@ -52,7 +52,7 @@ Each level is hosted in its own GitHub repository, ensuring a modular and scalab
 - Direct access to JSON schemas: `sdm://domain/model/schema.json`
 - Model examples: `sdm://domain/model/examples.json`
 - Domain contexts: `sdm://domain/context.jsonld`
-
+---
 ## Installation
 
 ### Prerequisites
@@ -72,7 +72,8 @@ git clone https://github.com/agaldemas/smartdatamodels-mcp
 cd smart-data-models-mcp
 pip install -e .
 ```
-
+---
+## Installation 2
 ### Install from TestPyPI (current version: 0.1.1)
 ```bash
 pip install --index-url https://test.pypi.org/simple/ smart-data-models-mcp
@@ -95,10 +96,8 @@ uv tool install smart-data-models-mcp
 ```
 
 **Note:** For PyPI installation with pip, use `pip install smart-data-models-mcp` (when published).
-
-## Configuration
-
-### GitHub Token Configuration
+---
+## Github Configuration 
 
 For optimal performance and to avoid rate limiting, you can configure a GitHub personal access token:
 
@@ -122,8 +121,9 @@ For optimal performance and to avoid rate limiting, you can configure a GitHub p
    ```
 
 The server automatically loads the token from the `.env` file or environment variables and uses it for GitHub API requests. If no token is provided, requests will work but may be rate-limited.
+---
 
-### Logging Configuration
+## Logging Configuration
 
 The server writes detailed logs to help with troubleshooting and monitoring. Log files are automatically created in the project's `logs/` directory:
 
@@ -143,8 +143,8 @@ You can check the logs for detailed information about:
 - Pysmartdatamodels operations
 - Caching behavior
 - Error conditions and troubleshooting details
-
-### Server Launch Commands
+---
+## Server Launch Commands
 
 #### Launch Server on Specific Port (SSE Mode)
 
@@ -195,7 +195,7 @@ uv run python src/smart_data_models_mcp/server.py --transport sse --host 0.0.0.0
 uv run python src/smart_data_models_mcp/server.py --help
 ```
 
-
+---
 ### MCP Server Configuration
 
 The Smart Data Models MCP server supports two transport modes:
@@ -231,7 +231,7 @@ To configure the smart-data-models-mcp server for use with Cline, add the follow
   }
 }
 ```
-
+---
 #### HTTP Streamable Mode
 ```json
 {
@@ -246,7 +246,7 @@ To configure the smart-data-models-mcp server for use with Cline, add the follow
   }
 }
 ```
-
+---
 ### Claude Desktop Configuration
 
 If you prefer to use the server with Claude Desktop, add the following to your Claude Desktop configuration file:
@@ -267,7 +267,7 @@ If you prefer to use the server with Claude Desktop, add the following to your C
 }
 ```
 **Note: this configuration remains to verify**
-
+---
 #### SSE Mode Configuration
 
 For web-based integrations or when you need to run the server as a web service, you can use the SSE (Server-Sent Events) transport mode. Add the following configuration to your MCP settings:
@@ -294,7 +294,7 @@ the Endpoint should be:
 
 - choose `sse`as Server Transport
 
-
+---
 
 ### Installation Steps
 
@@ -316,7 +316,7 @@ the Endpoint should be:
 4. **Test Configuration:**
    - Ask Cline: "What domains are available in Smart Data Models?"
    - If it shows domain information, the server is working correctly
-
+---
 ## Usage
 
 ### Basic Commands
@@ -350,7 +350,7 @@ After configuration, restart Claude Desktop to load the MCP server. You can then
 "Is this JSON valid for a Device entity?"
 "Check if my data matches the Building schema"
 ```
-
+---
 ### Example Interactions
 
 #### 1. Domain Exploration
