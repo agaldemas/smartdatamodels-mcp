@@ -127,12 +127,12 @@ Set `GITHUB_READ_TOKEN` to increase API rate limits for extensive searching.
 
 # Usage with AI Agent
 Once configured, you can ask your agent:
-- *"Lister tous les domaines disponibles dans Smart Data Models"*
-- *"Trouver des modèles liés à la qualité de l'air"*
-- *"Générer une entité NGSI-LD à partir de ces données de capteur : {...}"*
-- *"Valider ce fichier Building.json par rapport au schéma officiel"*
-- *"Quels modèles correspondraient le mieux à cette structure de données ?"*
-- *"Donne moi un exemple d'instance pour le modèle WasteContainer"*
+- *"List all available domains in Smart Data Models"*
+- *"Find models related to air quality"*
+- *"Generate an NGSI-LD entity from this sensor data: {...}"*
+- *"Validate this Building.json file against the official schema"*
+- *"Which models would best match this data structure?"*
+- *"Give me an example instance for the WasteContainer model"*
 
 ---
 
