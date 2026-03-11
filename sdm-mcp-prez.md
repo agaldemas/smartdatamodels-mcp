@@ -36,7 +36,7 @@
 
 # SDM Structure
 <div align="center">
-  <img src="img/sdm-organization.drawio.png" alt="SDM Organization" style="max-height: 400px;">
+  <img src="img/sdm-organization.drawio.png" alt="SDM Organization" style="max-height: 600px;">
 </div>
 
 - **Domains** (e.g., SmartCities) represent high-level sectors
