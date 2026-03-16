@@ -659,12 +659,23 @@ def main():
 
     root_logger.setLevel(log_level) # Set overall logging level
 
-    # Console handler
-    console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setLevel(log_level)
-    console_formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
-    console_handler.setFormatter(console_formatter)
-    root_logger.addHandler(console_handler)
+    # Handle transport modes
+    transport = args.transport.lower()
+
+    # Console handler - Only if not using stdio to avoid corrupting MCP communication
+    if transport != "stdio":
+        console_handler = logging.StreamHandler(sys.stdout)
+        console_handler.setLevel(log_level)
+        console_formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+        console_handler.setFormatter(console_formatter)
+        root_logger.addHandler(console_handler)
+    else:
+        # For stdio, we only log to file or stderr
+        stderr_handler = logging.StreamHandler(sys.stderr)
+        stderr_handler.setLevel(log_level)
+        stderr_formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+        stderr_handler.setFormatter(stderr_formatter)
+        root_logger.addHandler(stderr_handler)
 
     # File handler
     file_handler = RotatingFileHandler(
